@@ -686,12 +686,12 @@ protected:
 template <typename GHSumType, CpuType cpu>
 struct GHSumForTLS
 {
-    GHSumForTLS(GHSumType* p): ghSum(p), isInitilized(false)
+    GHSumForTLS(GHSumType* p): ghSum(p), isInitialized(false)
     {
     }
 
     GHSumType* ghSum;
-    bool isInitilized;
+    bool isInitialized;
 };
 
 template <typename T, typename algorithmFPType, CpuType cpu, typename Allocator = services::internal::ScalableMalloc<ghSum<algorithmFPType, cpu>, cpu>>
@@ -722,7 +722,7 @@ public:
         size = 0;
         this->reduce([&](T* ptr)-> void
         {
-            if(!ptr->isInitilized)
+            if(!ptr->isInitialized)
             {
                 return;
             }
@@ -735,7 +735,7 @@ public:
     {
         this->reduce([](T* ptr)-> void
         {
-            ptr->isInitilized = false;
+            ptr->isInitialized = false;
         });
     }
 

@@ -60,18 +60,19 @@ struct ColIndexTask
     };
 
     virtual services::Status makeIndex(NumericTable& nt, IndexedFeatures::FeatureEntry& entry,
-        IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature)
+        IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature, double* minValue, bool forceBinsAssignment)
     {
-        return this->makeIndexDefault(nt, entry, aRes, iCol, nRows, bUnorderedFeature);
+        return this->makeIndexDefault(nt, entry, aRes, iCol, nRows, bUnorderedFeature, minValue);
     }
 
     services::Status makeIndexDefault(NumericTable& nt, IndexedFeatures::FeatureEntry& entry,
-        IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature)
+        IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature, double* minValue)
     {
         Status s = this->getSorted(nt, iCol, nRows);
         if(!s)
             return s;
         const FeatureIdx* index = _index.get();
+        *minValue = 0;
         if(index[0].key == index[nRows - 1].key)
         {
             entry.numIndices = 1;
@@ -121,6 +122,8 @@ protected:
 protected:
     daal::internal::ReadColumns<algorithmFPType, cpu> _block;
     TVector<FeatureIdx, cpu, DefaultAllocator<cpu>> _index;
+public:
+    virtual size_t *getBins() { return nullptr; }
 };
 
 
@@ -130,7 +133,8 @@ struct ColIndexTaskBins : public ColIndexTask<IndexType, algorithmFPType, cpu>
     typedef ColIndexTask<IndexType, algorithmFPType, cpu> super;
     ColIndexTaskBins(size_t nRows, const BinParams& prm) : super(nRows), _prm(prm), _bins(_prm.maxBins){}
     virtual services::Status makeIndex(NumericTable& nt, IndexedFeatures::FeatureEntry& entry,
-        IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature) DAAL_C11_OVERRIDE;
+        IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature, double * minValue, bool forceBinsAssignment) DAAL_C11_OVERRIDE;
+    size_t *getBins() { return _bins.get(); }
 
 private:
     services::Status assignIndexAccordingToBins(IndexedFeatures::FeatureEntry& entry, IndexType* aRes, size_t nBins, size_t nRows);
@@ -182,6 +186,7 @@ services::Status ColIndexTaskBins<IndexType, algorithmFPType, cpu>::assignIndexA
 
         entry.binBorders[0] = index[nRows - 1].key;
         _bins[0] = nRows;
+
         return Status();
     }
     entry.numIndices = nBins;
@@ -203,16 +208,26 @@ services::Status ColIndexTaskBins<IndexType, algorithmFPType, cpu>::assignIndexA
 
 template <typename IndexType, typename algorithmFPType, CpuType cpu>
 services::Status ColIndexTaskBins<IndexType, algorithmFPType, cpu>::makeIndex(NumericTable& nt,
-    IndexedFeatures::FeatureEntry& entry, IndexType* aRes, size_t iCol, size_t nRows, bool bUnorderedFeature)
+    IndexedFeatures::FeatureEntry& entry, IndexType* aRes, size_t iCol, size_t nRows,
+        bool bUnorderedFeature, double* minValue, bool forceBinsAssignment)
 {
-    if(bUnorderedFeature || nRows <= _prm.maxBins*_prm.minBinSize)
-        return this->makeIndexDefault(nt, entry, aRes, iCol, nRows, bUnorderedFeature);
+    Status s;
+    if( ( bUnorderedFeature || nRows <= _prm.maxBins*_prm.minBinSize ) && !forceBinsAssignment )
+    {
+        s |= this->makeIndexDefault(nt, entry, aRes, iCol, nRows, bUnorderedFeature, minValue);
+        return s;
+    }
+    else
+    {
+        s = this->getSorted(nt, iCol, nRows);
+    }
 
-    Status s = this->getSorted(nt, iCol, nRows);
     if(!s)
         return s;
 
     const typename super::FeatureIdx* index = this->_index.get();
+
+    *minValue = index[0].key;
     if(index[0].key == index[nRows - 1].key)
     {
         _bins[0] = nRows;
@@ -226,7 +241,8 @@ services::Status ColIndexTaskBins<IndexType, algorithmFPType, cpu>::makeIndex(Nu
     }
 
     size_t nBins = 0;
-    const size_t binSize = nRows / _prm.maxBins;
+    size_t binSize = nRows / _prm.maxBins;
+    if ( binSize == 0 ) binSize = 1;
     size_t i = 0;
     for(; (i + binSize < nRows) && (nBins < _prm.maxBins);)
     {
@@ -340,13 +356,17 @@ services::Status IndexedFeatures::init(const NumericTable& nt, const FeatureType
     });
 
     SafeStatus safeStat;
+
+    TVector<ModelFPType, cpu, DefaultAllocator<cpu>> vectorMinFeatureValues(nC);
+    _minFeatureValues = vectorMinFeatureValues.get();
+
     daal::threader_for(nC, nC, [&](size_t iCol)
     {
         //in case of single thread no need to allocate
         TlsTask* task = tlsData.local();
         DAAL_CHECK_THR(task, services::ErrorMemoryAllocationFailed);
         safeStat |= task->makeIndex(const_cast<NumericTable&>(nt), _entries[iCol], _data + iCol*nRows(), iCol, nRows(),
-            featureTypes->isUnordered(iCol));
+            featureTypes->isUnordered(iCol), _minFeatureValues + iCol, false);
     });
     tlsData.reduce([&](TlsTask* task)-> void
     {
@@ -354,6 +374,81 @@ services::Status IndexedFeatures::init(const NumericTable& nt, const FeatureType
             _maxNumIndices = task->maxNumDiffValues;
         delete task;
     });
+
+    return safeStat.detach();
+}
+
+template <typename algorithmFPType, CpuType cpu>
+services::Status IndexedFeaturesCPU<algorithmFPType, cpu>::init(const NumericTable& nt, const FeatureTypes* featureTypes,
+    const BinParams* pBimPrm)
+{
+    dtrees::internal::FeatureTypes autoFT;
+    if(!featureTypes)
+    {
+        DAAL_CHECK_MALLOC(autoFT.init(nt));
+        featureTypes = &autoFT;
+    }
+
+    _maxNumIndices = 0;
+    services::Status s = alloc(nt.getNumberOfColumns(), nt.getNumberOfRows());
+    if(!s)
+        return s;
+
+    const size_t nC = nt.getNumberOfColumns();
+    const size_t nR = nt.getNumberOfRows();
+    typedef ColIndexTask<IndexType, algorithmFPType, cpu> TlsTask;
+    typedef ColIndexTask<IndexType, algorithmFPType, cpu> DefaultTask;
+    typedef ColIndexTaskBins<IndexType, algorithmFPType, cpu> BinningTask;
+
+    daal::tls<TlsTask*> tlsData([=, &nt]()->TlsTask*
+    {
+        const size_t nRows = nt.getNumberOfRows();
+        TlsTask* res = (pBimPrm ? new BinningTask(nRows, *pBimPrm) : new DefaultTask(nRows));
+        if(res && !res->isValid())
+        {
+            delete res;
+            res = nullptr;
+        }
+        return res;
+    });
+
+    TVector<size_t, cpu, DefaultAllocator<cpu>> **binsPtr = nullptr;
+    if (pBimPrm)
+    {
+        const size_t maxBins = pBimPrm->maxBins;
+        _bins = new TVector<TVector<size_t, cpu, DefaultAllocator<cpu>>*, cpu, DefaultAllocator<cpu>>(nC);
+        for (size_t iCol = 0; iCol < nC; ++iCol)
+            (*_bins)[iCol] = new TVector<size_t, cpu, DefaultAllocator<cpu>>(maxBins);
+        binsPtr = _bins->get();
+    }
+
+    SafeStatus safeStat;
+
+    TVector<ModelFPType, cpu, DefaultAllocator<cpu>> vectorMinFeatureValues(nC);
+    _minFeatureValues = vectorMinFeatureValues.get();
+
+    daal::threader_for(nC, nC, [&](size_t iCol)
+    {
+        //in case of single thread no need to allocate
+        TlsTask* task = tlsData.local();
+        DAAL_CHECK_THR(task, services::ErrorMemoryAllocationFailed);
+        safeStat |= task->makeIndex(const_cast<NumericTable&>(nt), _entries[iCol], _data + iCol*nRows(), iCol, nRows(),
+            featureTypes->isUnordered(iCol), _minFeatureValues + iCol, true);
+        if (pBimPrm)
+        {
+            const size_t maxBins = pBimPrm->maxBins;
+            size_t *localBins = binsPtr[iCol]->get();
+            for (size_t iBin = 0; iBin < maxBins; ++iBin)
+                localBins[iBin] = (task->getBins())[iBin];
+        }
+    });
+    tlsData.reduce([&](TlsTask* task)-> void
+    {
+        if(_maxNumIndices < task->maxNumDiffValues)
+            _maxNumIndices = task->maxNumDiffValues;
+        delete task;
+    });
+
     return safeStat.detach();
 }
 

@@ -73,6 +73,7 @@ gbt\GbtClsDenseBatch ^
 gbt\GbtClsTraversedModelBuilder ^
 gbt\GbtRegDenseBatch ^
 gbt\GbtRegTraversedModelBuilder ^
+gbt\GbtRegDenseDistr ^
 kdtree_knn_classification\KDTreeKNNDenseBatch ^
 kmeans\KMeansDenseBatch ^
 kmeans\KMeansCSRBatch ^

@@ -27,11 +27,13 @@
 
 #include "gbt_regression_train_kernel.h"
 #include "gbt_regression_model_impl.h"
+#include "gbt_regression_loss_impl.h"
 #include "gbt_train_dense_default_impl.i"
 #include "gbt_train_tree_builder.i"
 
 using namespace daal::algorithms::dtrees::training::internal;
 using namespace daal::algorithms::gbt::training::internal;
+using namespace daal::algorithms::gbt::regression::internal;
 
 namespace daal
 {
@@ -45,40 +47,6 @@ namespace training
 {
 namespace internal
 {
-
-//////////////////////////////////////////////////////////////////////////////////////////
-// Squared loss function, L(y,f)=1/2([y-f(x)]^2)
-//////////////////////////////////////////////////////////////////////////////////////////
-template <typename algorithmFPType, CpuType cpu>
-class SquaredLoss : public LossFunction<algorithmFPType, cpu>
-{
-public:
-    virtual void getGradients(size_t n, size_t nRows, const algorithmFPType* y, const algorithmFPType* f,
-        const IndexType* sampleInd,
-        algorithmFPType* gh) DAAL_C11_OVERRIDE
-    {
-        if(sampleInd)
-        {
-            PRAGMA_IVDEP
-            PRAGMA_VECTOR_ALWAYS
-            for(size_t i = 0; i < n; ++i)
-            {
-                gh[2 * sampleInd[i]] = f[sampleInd[i]] - y[sampleInd[i]]; //gradient
-                gh[2 * sampleInd[i] + 1] = 1; //hessian
-            }
-        }
-        else
-        {
-            PRAGMA_IVDEP
-            PRAGMA_VECTOR_ALWAYS
-            for(size_t i = 0; i < n; ++i)
-            {
-                gh[2 * i] = f[i] - y[i]; //gradient
-                gh[2 * i + 1] = 1; //hessian
-            }
-        }
-    }
-};
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // TrainBatchTask for regression
