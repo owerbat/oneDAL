@@ -35,6 +35,8 @@
 #include "service_numeric_table.h"
 #include "service_math.h"
 
+#include "tbb/tbb.h"
+
 using namespace daal::algorithms::lasso_regression::training::internal;
 using namespace daal::algorithms::optimization_solver;
 using namespace daal;
@@ -151,36 +153,97 @@ services::Status TrainBatchKernel<algorithmFPType, method, cpu>::compute(
 
         DAAL_OVERFLOW_CHECK_BY_MULTIPLICATION(size_t, nFeatures, sizeof(algorithmFPType));
 
-        TlsMem<algorithmFPType,cpu,services::internal::ScalableCalloc<algorithmFPType, cpu> > tlsData(nFeatures);
-        daal::threader_for(nBlocks, nBlocks, [&](const size_t iBlock)
-        {
-            algorithmFPType* sum = tlsData.local();
-            const size_t startRow = iBlock * blockSize;
-            const size_t finishRow = (iBlock + 1 == nBlocks ? nRows : (iBlock + 1) * blockSize);
-            for(size_t i = startRow; i < finishRow; i++)
-            {
+        // // Original
+        // TlsMem<algorithmFPType,cpu,services::internal::ScalableCalloc<algorithmFPType, cpu> > tlsData(nFeatures);
+        // // daal::threader_for(nBlocks, nBlocks, [&](const size_t iBlock)
+        // for (size_t iBlock = 0; iBlock < nBlocks; ++iBlock)
+        // {
+        //     algorithmFPType* sum = tlsData.local();
+        //     const size_t startRow = iBlock * blockSize;
+        //     const size_t finishRow = (iBlock + 1 == nBlocks ? nRows : (iBlock + 1) * blockSize);
+        //     for(size_t i = startRow; i < finishRow; i++)
+        //     {
+        //         PRAGMA_IVDEP
+        //         PRAGMA_VECTOR_ALWAYS
+        //         for(int j = 0; j < nFeatures; j++)
+        //         {
+        //             sum[j] += xPtr[i*nFeatures + j];
+        //         }
+        //     }
+        // }//);
+        // tlsData.reduce([&](algorithmFPType* localSum)
+        // {
+        //     PRAGMA_IVDEP
+        //     PRAGMA_VECTOR_ALWAYS
+        //     for(int j = 0; j < nFeatures; j++)
+        //     {
+        //         xMeansPtr[j] += localSum[j];
+        //     }
+        // });
+
+        // for(size_t i = 0; i < nFeatures; ++i)
+        // {
+        //     xMeansPtr[i] *= inversedNRows;
+        // }
+        // // Original
+
+
+        // Option 2
+        tbb::enumerable_thread_specific<algorithmFPType*> tls([] { return nullptr; });
+        auto total = tbb::parallel_deterministic_reduce(tbb::blocked_range<int>(0, nRows, blockSize), static_cast<algorithmFPType*>(nullptr),
+            [&] (const tbb::blocked_range<int>& range, algorithmFPType *value) {
+                algorithmFPType*& local = tls.local();
+                if (local)
+                {
+                    value = local;
+                    local = nullptr;
+                }
+                else
+                {
+                    value = new algorithmFPType[nFeatures];
+                }
+                // services::internal::service_memset_seq<algorithmFPType, cpu>(value, algorithmFPType(0.0), nFeatures);
                 PRAGMA_IVDEP
                 PRAGMA_VECTOR_ALWAYS
                 for(int j = 0; j < nFeatures; j++)
                 {
-                    sum[j] += xPtr[i*nFeatures + j];
+                    value[j] = 0;
                 }
+
+                for (auto it = range.begin(); it != range.end(); ++it)
+                {
+                    PRAGMA_IVDEP
+                    PRAGMA_VECTOR_ALWAYS
+                    for(int j = 0; j < nFeatures; j++)
+                    {
+                        value[j] += xPtr[it*nFeatures + j];
+                    }
+                }
+                return const_cast<algorithmFPType*>(value);
+            },
+            [&] (const algorithmFPType* lhs, const algorithmFPType* rhs) {
+                for (int i = 0; i < nFeatures; ++i)
+                {
+                    (const_cast<algorithmFPType*>(lhs))[i] += rhs[i];
+                }
+                algorithmFPType*& local = tls.local();
+                if (local)
+                {
+                    delete[] local;
+                }
+                local = const_cast<algorithmFPType*>(rhs);
+                return const_cast<algorithmFPType*>(lhs);
             }
-        });
-        tlsData.reduce([&](algorithmFPType* localSum)
-        {
-            PRAGMA_IVDEP
-            PRAGMA_VECTOR_ALWAYS
-            for(int j = 0; j < nFeatures; j++)
-            {
-                xMeansPtr[j] += localSum[j];
-            }
-        });
+        );
+
+        for (auto it = tls.begin(); it != tls.end(); ++it)
+            delete[] *it; // maybe delete[] it; ?
 
         for(size_t i = 0; i < nFeatures; ++i)
         {
-            xMeansPtr[i] *= inversedNRows;
+            xMeansPtr[i] = total[i] * inversedNRows;
         }
+        // Option 2
 
         daal::threader_for(nBlocks, nBlocks, [&](const size_t iBlock)
         {
