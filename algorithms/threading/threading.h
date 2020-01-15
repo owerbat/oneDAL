@@ -33,6 +33,9 @@ typedef void (*functype2)(int i, int n, const void * a);
 typedef void * (*tls_functype)(const void * a);
 typedef void (*tls_reduce_functype)(void * p, const void * a);
 class task;
+template <typename LocalResultType, typename loop_functype, typename reduce_functype>
+DAAL_EXPORT LocalResultType* _daal_parallel_deterministic_reduce(int n, int grain_size, int local_res_len, const void* a, const void* b,
+                                                                 loop_functype loop_func, reduce_functype reduce_func);
 } // namespace daal
 
 extern "C"
@@ -316,6 +319,33 @@ protected:
 inline bool is_in_parallel()
 {
     return _daal_is_in_parallel();
+}
+
+template<typename LocalResultType, typename F>
+inline void loop_func(LocalResultType* local, int begin, int end, const void *a)
+{
+    const F &lambda = *static_cast<const F *>(a);
+    lambda(local, begin, end);
+}
+
+template<typename LocalResultType, typename F>
+inline void reduce_func(const LocalResultType* lhs, const LocalResultType* rhs, const void *a)
+{
+    const F &lambda = *static_cast<const F *>(a);
+    lambda(lhs, rhs);
+}
+
+template<typename LocalResultType, typename F1, typename F2>
+inline LocalResultType* parallel_deterministic_reduce(int n, int grain_size, int local_res_len, const F1 &loop_function, const F2 &reduce_function)
+{
+    const void *a = static_cast<const void *>(&loop_function);
+    const void *b = static_cast<const void *>(&reduce_function);
+
+    typedef void (*loop_functype)(LocalResultType* local, int begin, int end, const void *f);
+    typedef void (*reduce_functype)(const LocalResultType* lhs, const LocalResultType* rhs, const void *f);
+
+    return _daal_parallel_deterministic_reduce<LocalResultType, loop_functype, reduce_functype>(n, grain_size,
+        local_res_len, a, b, loop_func<LocalResultType, F1>, reduce_func<LocalResultType, F2>);
 }
 
 } // namespace daal
