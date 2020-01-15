@@ -22,7 +22,7 @@
 */
 #include "service_math.h"
 
-#include "tbb/tbb.h"
+// #include "tbb/tbb.h"
 
 namespace daal
 {
@@ -414,8 +414,8 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     TlsMem<algorithmFPType,cpu,services::internal::ScalableCalloc<algorithmFPType, cpu> > tlsData(dim*yDim + (nTheta)*(nTheta));
                     const size_t disp = dim*yDim;
                     // // Original
-                    // // daal::threader_for(nBlocks, nBlocks, [&](const size_t iBlock)
-                    // for (size_t iBlock = 0; iBlock < nBlocks; ++iBlock)
+                    // daal::threader_for(nBlocks, nBlocks, [&](const size_t iBlock)
+                    // // for (size_t iBlock = 0; iBlock < nBlocks; ++iBlock)
                     // {
                     //     algorithmFPType* localXY = tlsData.local();
                     //     algorithmFPType* localGram = localXY + disp;
@@ -434,7 +434,7 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     //                                                               &dim, &one, localXY, &yDim);
                     //         Blas<algorithmFPType, cpu>::xxsyrk(&uplo, &notrans, &dim, &localBlockSizeDim, &one, X + startRow*dim, &dim, &one, localGram, &dim);
                     //     }
-                    // }//);
+                    // });
                     // tlsData.reduce([&](algorithmFPType* local)
                     // {
                     //     PRAGMA_IVDEP
@@ -453,34 +453,99 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     // // Original
 
 
-                    // Option 2
-                    const size_t len = dim*yDim + (nTheta)*(nTheta);
-                    tbb::enumerable_thread_specific<algorithmFPType*> tls([] { return nullptr; });
-                    auto total = tbb::parallel_deterministic_reduce(tbb::blocked_range<int>(0, nDataRows, blockSize), static_cast<algorithmFPType*>(nullptr),
-                        [&] (const tbb::blocked_range<int>& range, algorithmFPType *value) {
-                            algorithmFPType*& local = tls.local();
-                            if (local)
-                            {
-                                value = local;
-                                local = nullptr;
-                            }
-                            else
-                            {
-                                value = new algorithmFPType[len];
-                            }
-                            // services::internal::service_memset_seq<algorithmFPType, cpu>(value, algorithmFPType(0.0), len);
+                    // // Option 2
+                    // const size_t len = dim*yDim + (nTheta)*(nTheta);
+                    // tbb::enumerable_thread_specific<algorithmFPType*> tls([] { return nullptr; });
+                    // auto total = tbb::parallel_deterministic_reduce(tbb::blocked_range<int>(0, nDataRows, blockSize), static_cast<algorithmFPType*>(nullptr),
+                    //     [&] (const tbb::blocked_range<int>& range, algorithmFPType *value) {
+                    //         algorithmFPType*& local = tls.local();
+                    //         if (local)
+                    //         {
+                    //             value = local;
+                    //             local = nullptr;
+                    //         }
+                    //         else
+                    //         {
+                    //             value = new algorithmFPType[len];
+                    //         }
+                    //         // services::internal::service_memset_seq<algorithmFPType, cpu>(value, algorithmFPType(0.0), len);
+                    //         PRAGMA_IVDEP
+                    //         PRAGMA_VECTOR_ALWAYS
+                    //         for(int j = 0; j < len; j++)
+                    //         {
+                    //             value[j] = 0;
+                    //         }
+
+                    //         algorithmFPType *localXY = value;
+                    //         algorithmFPType *localGram = localXY + disp;
+                    //         const size_t startRow = range.begin();
+                    //         DAAL_INT localBlockSizeDim = range.size();
+                    //         // DAAL_INT localBlockSizeDim = range.end() - range.begin() + 1;
+                    //         if(transposedData)
+                    //         {
+                    //             daal::internal::Blas<algorithmFPType, cpu>::xxgemm(&notrans, &notrans, &yDim, &dim, &localBlockSizeDim, &one, Y + startRow*yDim, &yDim,X  + startRow,
+                    //                                                                &n, &one, localXY, &yDim);
+                    //             Blas<algorithmFPType, cpu>::xxsyrk(&uplo, &trans, &dim, &localBlockSizeDim, &one, X + startRow, &n, &one, localGram, &dim);
+                    //         }
+                    //         else
+                    //         {
+                    //             daal::internal::Blas<algorithmFPType, cpu>::xxgemm(&notrans, &trans, &yDim, &dim, &localBlockSizeDim, &one, Y + startRow*yDim, &yDim, X + startRow*dim,
+                    //                                                                   &dim, &one, localXY, &yDim);
+                    //             Blas<algorithmFPType, cpu>::xxsyrk(&uplo, &notrans, &dim, &localBlockSizeDim, &one, X + startRow*dim, &dim, &one, localGram, &dim);
+                    //         }
+
+                    //         return value;
+                    //     },
+                    //     [&] (const algorithmFPType* lhs, const algorithmFPType* rhs) {
+                    //         for (int i = 0; i < len; ++i)
+                    //         {
+                    //             (const_cast<algorithmFPType*>(lhs))[i] += rhs[i];
+                    //         }
+                    //         algorithmFPType*& local = tls.local();
+                    //         if (local)
+                    //         {
+                    //             delete[] local;
+                    //         }
+                    //         local = const_cast<algorithmFPType*>(rhs);
+                    //         return const_cast<algorithmFPType*>(lhs);
+                    //     }
+                    // );
+
+                    // for (auto it = tls.begin(); it != tls.end(); ++it)
+                    //     delete[] *it;
+
+                    // PRAGMA_IVDEP
+                    // PRAGMA_VECTOR_ALWAYS
+                    // for(int j = 0; j < dim*yDim; j++)
+                    // {
+                    //     XYPtr[j] += total[j];
+                    // }
+                    // PRAGMA_IVDEP
+                    // PRAGMA_VECTOR_ALWAYS
+                    // for(int j = 0; j < dim*dim; j++)
+                    // {
+                    //     gramMatrixPtr[j] += total[j + disp];
+                    // }
+                    // // Option 2
+
+
+                    // Option 3
+                    int len = dim*yDim + (nTheta)*(nTheta);
+                    algorithmFPType* total = daal::parallel_deterministic_reduce<algorithmFPType>(nDataRows, blockSize, len,
+                        [&] (algorithmFPType* local, int begin, int end)
+                        {
                             PRAGMA_IVDEP
                             PRAGMA_VECTOR_ALWAYS
                             for(int j = 0; j < len; j++)
                             {
-                                value[j] = 0;
+                                local[j] = 0;
                             }
 
-                            algorithmFPType *localXY = value;
+                            algorithmFPType *localXY = local;
                             algorithmFPType *localGram = localXY + disp;
-                            const size_t startRow = range.begin();
-                            DAAL_INT localBlockSizeDim = range.size();
-                            // DAAL_INT localBlockSizeDim = range.end() - range.begin() + 1;
+                            const size_t startRow = begin;
+                            DAAL_INT localBlockSizeDim = end - begin;
+
                             if(transposedData)
                             {
                                 daal::internal::Blas<algorithmFPType, cpu>::xxgemm(&notrans, &notrans, &yDim, &dim, &localBlockSizeDim, &one, Y + startRow*yDim, &yDim,X  + startRow,
@@ -493,26 +558,14 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                                                                                       &dim, &one, localXY, &yDim);
                                 Blas<algorithmFPType, cpu>::xxsyrk(&uplo, &notrans, &dim, &localBlockSizeDim, &one, X + startRow*dim, &dim, &one, localGram, &dim);
                             }
-
-                            return value;
-                        },
-                        [&] (const algorithmFPType* lhs, const algorithmFPType* rhs) {
+                        }, [&] (const algorithmFPType* lhs, const algorithmFPType* rhs)
+                        {
                             for (int i = 0; i < len; ++i)
                             {
                                 (const_cast<algorithmFPType*>(lhs))[i] += rhs[i];
                             }
-                            algorithmFPType*& local = tls.local();
-                            if (local)
-                            {
-                                delete[] local;
-                            }
-                            local = const_cast<algorithmFPType*>(rhs);
-                            return const_cast<algorithmFPType*>(lhs);
                         }
                     );
-
-                    for (auto it = tls.begin(); it != tls.end(); ++it)
-                        delete[] *it;
 
                     PRAGMA_IVDEP
                     PRAGMA_VECTOR_ALWAYS
@@ -526,7 +579,7 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     {
                         gramMatrixPtr[j] += total[j + disp];
                     }
-                    // Option 2
+                    // Option 3
 
 
                     const size_t dimension = dim;
