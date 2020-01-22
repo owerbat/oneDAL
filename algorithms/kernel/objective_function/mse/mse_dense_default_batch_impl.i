@@ -407,17 +407,21 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     const size_t disp = dim * yDim;
 
                     int len = dim*yDim + (nTheta)*(nTheta);
-                    algorithmFPType* total = daal::parallel_deterministic_reduce<algorithmFPType>(nDataRows, blockSize, len,
-                        [&] (algorithmFPType* local, int begin, int end)
+                    algorithmFPType* total = (algorithmFPType*)daal::parallel_deterministic_reduce(nDataRows, blockSize,
+                        [&] (void** value)
+                        {
+                            *value = static_cast<void*>(services::internal::service_scalable_malloc<algorithmFPType, cpu>(len));
+                            services::internal::service_memset<algorithmFPType, cpu>((algorithmFPType*)(*value), 0, len);
+                        }, [&] (void* local, int begin, int end)
                         {
                             PRAGMA_IVDEP
                             PRAGMA_VECTOR_ALWAYS
                             for(int j = 0; j < len; j++)
                             {
-                                local[j] = 0;
+                                ((algorithmFPType*)local)[j] = 0;
                             }
 
-                            algorithmFPType *localXY = local;
+                            algorithmFPType *localXY = (algorithmFPType*)local;
                             algorithmFPType *localGram = localXY + disp;
                             const size_t startRow = begin;
                             DAAL_INT localBlockSizeDim = end - begin;
@@ -434,11 +438,11 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                                                                                       &dim, &one, localXY, &yDim);
                                 Blas<algorithmFPType, cpu>::xxsyrk(&uplo, &notrans, &dim, &localBlockSizeDim, &one, X + startRow*dim, &dim, &one, localGram, &dim);
                             }
-                        }, [&] (const algorithmFPType* lhs, const algorithmFPType* rhs)
+                        }, [&] (const void* lhs, const void* rhs)
                         {
                             for (int i = 0; i < len; ++i)
                             {
-                                (const_cast<algorithmFPType*>(lhs))[i] += rhs[i];
+                                (const_cast<algorithmFPType*>((algorithmFPType*)lhs))[i] += ((algorithmFPType*)rhs)[i];
                             }
                         }
                     );

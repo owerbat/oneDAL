@@ -32,8 +32,14 @@
 #include "algorithms/optimization_solver/objective_function/mse_batch.h"
 #include "algorithms/optimization_solver/coordinate_descent/coordinate_descent_batch.h"
 
+<<<<<<< HEAD
 #include "service/kernel/data_management/service_numeric_table.h"
 #include "externals/service_math.h"
+=======
+#include "service_numeric_table.h"
+#include "service_math.h"
+#include "service_memory.h"
+>>>>>>> templates removed from deterministic reduce
 
 using namespace daal::algorithms::lasso_regression::training::internal;
 using namespace daal::algorithms::optimization_solver;
@@ -149,30 +155,34 @@ services::Status TrainBatchKernel<algorithmFPType, method, cpu>::compute(
 
         DAAL_OVERFLOW_CHECK_BY_MULTIPLICATION(size_t, nFeatures, sizeof(algorithmFPType));
 
-        algorithmFPType* total = daal::parallel_deterministic_reduce<algorithmFPType>(nRows, blockSize, nFeatures,
-            [&] (algorithmFPType* local, int begin, int end)
+        algorithmFPType* total = (algorithmFPType*)daal::parallel_deterministic_reduce(nRows, nRows,
+            [&] (void** value)
+            {
+                *value = static_cast<void*>(services::internal::service_scalable_malloc<algorithmFPType, cpu>(nFeatures));
+                services::internal::service_memset<algorithmFPType, cpu>((algorithmFPType*)(*value), 0, nFeatures);
+            }, [&] (void* local, int begin, int end)
             {
                 PRAGMA_IVDEP
                 PRAGMA_VECTOR_ALWAYS
                 for (size_t j = 0; j < nFeatures; j++)
                 {
-                    local[j] = 0;
+                    ((algorithmFPType*)local)[j] = 0;
                 }
 
                 for (int it = begin; it != end; ++it)
                 {
                     PRAGMA_IVDEP
                     PRAGMA_VECTOR_ALWAYS
-                    for(int j = 0; j < nFeatures; j++)
+                    for(int j = 0; j < nFeatures; ++j)
                     {
-                        local[j] += xPtr[it*nFeatures + j];
+                        ((algorithmFPType*)local)[j] += xPtr[it*nFeatures + j];
                     }
                 }
-            }, [&] (const algorithmFPType* lhs, const algorithmFPType* rhs)
+            }, [&] (const void* lhs, const void* rhs)
             {
                 for (int i = 0; i < nFeatures; ++i)
                 {
-                    (const_cast<algorithmFPType*>(lhs))[i] += rhs[i];
+                    (const_cast<algorithmFPType*>(((algorithmFPType*)lhs)))[i] += ((algorithmFPType*)rhs)[i];
                 }
             }
         );
