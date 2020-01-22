@@ -633,28 +633,17 @@ DAAL_EXPORT void _daal_wait_task_group(void * taskGroupPtr) {}
 
 #endif
 
-namespace daal
+DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, const void* a, const void* b, const void* c,
+                                                      daal::init_functype init_func, daal::loop_functype loop_func, daal::reduce_functype reduce_func)
 {
-typedef void (*loop_functype_float)(float* local, int begin, int end, const void *f);
-typedef void (*reduce_functype_float)(const float* lhs, const float* rhs, const void *f);
-template float* _daal_parallel_deterministic_reduce<float, loop_functype_float, reduce_functype_float>(int, int, int, const void*, const void*, loop_functype_float, reduce_functype_float);
-
-typedef void (*loop_functype_double)(double* local, int begin, int end, const void *f);
-typedef void (*reduce_functype_double)(const double* lhs, const double* rhs, const void *f);
-template double* _daal_parallel_deterministic_reduce<double, loop_functype_double, reduce_functype_double>(int, int, int, const void*, const void*, loop_functype_double, reduce_functype_double);
-
-template<typename LocalResultType, typename loop_functype, typename reduce_functype>
-DAAL_EXPORT LocalResultType* _daal_parallel_deterministic_reduce(int n, int grain_size, int local_res_len, const void* a, const void* b,
-                                                                 loop_functype loop_func, reduce_functype reduce_func)
-{
-    LocalResultType* total = nullptr;
+    void* total = nullptr;
 
   #if defined(__DO_TBB_LAYER__)
-    tbb::enumerable_thread_specific<LocalResultType*> tls([] { return nullptr; });
-    total = tbb::parallel_deterministic_reduce(tbb::blocked_range<int>(0, n, grain_size),
-        static_cast<LocalResultType*>(nullptr), [&] (const tbb::blocked_range<int>& range, LocalResultType* value)
+    tbb::enumerable_thread_specific<void*> tls([] { return nullptr; });
+    total = tbb::parallel_deterministic_reduce(tbb::blocked_range<int>(0, n, grain_size), static_cast<void*>(nullptr),
+        [&] (const tbb::blocked_range<int>& range, void* value)
         {
-            LocalResultType*& local = tls.local();
+            void*& local = tls.local();
 
             if (local)
             {
@@ -663,43 +652,45 @@ DAAL_EXPORT LocalResultType* _daal_parallel_deterministic_reduce(int n, int grai
             }
             else
             {
-                value = new LocalResultType[local_res_len];
+                init_func(&value, a);
             }
 
-            loop_func(value, range.begin(), range.end(), a);
+            loop_func(value, range.begin(), range.end(), b);
 
             return value;
-        }, [&] (const LocalResultType* lhs, const LocalResultType* rhs)
+        }, [&] (const void* lhs, const void* rhs)
         {
-            reduce_func(lhs, rhs, b);
+            reduce_func(lhs, rhs, c);
 
-            LocalResultType*& local = tls.local();
+            void*& local = tls.local();
             if (local)
             {
-                delete[] local;
+                daal::threaded_scalable_free(local);
             }
-            local = const_cast<LocalResultType*>(rhs);
+            local = const_cast<void*>(rhs);
 
-            return const_cast<LocalResultType*>(lhs);
+            return const_cast<void*>(lhs);
         }
     );
 
     for (auto it = tls.begin(); it != tls.end(); ++it)
-        delete[] *it;
+        daal::threaded_scalable_free(*it);
   #elif defined(__DO_SEQ_LAYER__)
-    total = new LocalResultType[local_res_len];
-    LocalResultType* local  = new LocalResultType[local_res_len];
+    void* local = nullptr;
 
-    for(int j = 0; j < local_res_len; ++j)
-        total[j] = LocalResultType{};
+    init_func(&total, a);
+    init_func(&local, a);
 
     for (int i = 0; i < n; ++i)
     {
-        loop_func(local, i, i + 1, a);
-        reduce_func(total, local, b);
+        loop_func(local, i, i + 1, b);
+        reduce_func(total, local, c);
     }
   #endif
 
     return total;
 }
+
+namespace daal
+{
 }

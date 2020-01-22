@@ -25,6 +25,7 @@
 #define __THREADING_H__
 
 #include "daal_defines.h"
+#include "service_defines.h"
 
 namespace daal
 {
@@ -32,10 +33,10 @@ typedef void (*functype)(int i, const void * a);
 typedef void (*functype2)(int i, int n, const void * a);
 typedef void * (*tls_functype)(const void * a);
 typedef void (*tls_reduce_functype)(void * p, const void * a);
+typedef void (*init_functype)(void** value, const void *f);
+typedef void (*loop_functype)(void* local, int begin, int end, const void *f);
+typedef void (*reduce_functype)(const void* lhs, const void* rhs, const void *f);
 class task;
-template <typename LocalResultType, typename loop_functype, typename reduce_functype>
-DAAL_EXPORT LocalResultType* _daal_parallel_deterministic_reduce(int n, int grain_size, int local_res_len, const void* a, const void* b,
-                                                                 loop_functype loop_func, reduce_functype reduce_func);
 } // namespace daal
 
 extern "C"
@@ -75,6 +76,9 @@ extern "C"
 
     DAAL_EXPORT void * _threaded_scalable_malloc(const size_t size, const size_t alignment);
     DAAL_EXPORT void _threaded_scalable_free(void * ptr);
+    
+    DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, const void* a, const void* b, const void* c,
+                                                          daal::init_functype init_func, daal::loop_functype loop_func, daal::reduce_functype reduce_func);
 }
 
 namespace daal
@@ -321,31 +325,35 @@ inline bool is_in_parallel()
     return _daal_is_in_parallel();
 }
 
-template<typename LocalResultType, typename F>
-inline void loop_func(LocalResultType* local, int begin, int end, const void *a)
+template<typename F>
+inline void init_func(void** value, const void *a)
+{
+    const F &lambda = *static_cast<const F *>(a);
+    lambda(value);
+}
+
+template<typename F>
+inline void loop_func(void* local, int begin, int end, const void *a)
 {
     const F &lambda = *static_cast<const F *>(a);
     lambda(local, begin, end);
 }
 
-template<typename LocalResultType, typename F>
-inline void reduce_func(const LocalResultType* lhs, const LocalResultType* rhs, const void *a)
+template<typename F>
+inline void reduce_func(const void* lhs, const void* rhs, const void *a)
 {
     const F &lambda = *static_cast<const F *>(a);
     lambda(lhs, rhs);
 }
 
-template<typename LocalResultType, typename F1, typename F2>
-inline LocalResultType* parallel_deterministic_reduce(int n, int grain_size, int local_res_len, const F1 &loop_function, const F2 &reduce_function)
+template<typename F1, typename F2, typename F3>
+inline void* parallel_deterministic_reduce(int n, int grain_size, const F1 &init_function, const F2 &loop_function, const F3 &reduce_function)
 {
-    const void *a = static_cast<const void *>(&loop_function);
-    const void *b = static_cast<const void *>(&reduce_function);
+    const void *a = static_cast<const void *>(&init_function);
+    const void *b = static_cast<const void *>(&loop_function);
+    const void *c = static_cast<const void *>(&reduce_function);
 
-    typedef void (*loop_functype)(LocalResultType* local, int begin, int end, const void *f);
-    typedef void (*reduce_functype)(const LocalResultType* lhs, const LocalResultType* rhs, const void *f);
-
-    return _daal_parallel_deterministic_reduce<LocalResultType, loop_functype, reduce_functype>(n, grain_size,
-        local_res_len, a, b, loop_func<LocalResultType, F1>, reduce_func<LocalResultType, F2>);
+    return _daal_parallel_deterministic_reduce(n, grain_size, a, b, c, init_func<F1>, loop_func<F2>, reduce_func<F3>);
 }
 
 } // namespace daal
