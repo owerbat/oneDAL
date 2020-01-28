@@ -49,13 +49,19 @@ struct tls_task_t
 {
     DAAL_NEW_DELETE();
 
-    tls_task_t(int dim, int clNum, int max_block_size)
+    tls_task_t(int dim_, int clNum_, int max_block_size_) : dim(dim_), clNum(clNum_), max_block_size(max_block_size_)
     {
-        mkl_buff = service_scalable_calloc<algorithmFPType, cpu>(max_block_size * clNum);
-        cS1      = service_scalable_calloc<algorithmFPType, cpu>(clNum * dim);
-        cS0      = service_scalable_calloc<int, cpu>(clNum);
-        cValues  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
-        cIndices = service_scalable_calloc<size_t, cpu>(clNum);
+        mkl_buff = service_scalable_calloc<algorithmFPType, cpu>(max_block_size_ * clNum_);
+        cS1      = service_scalable_calloc<algorithmFPType, cpu>(clNum_ * dim_);
+        cS0      = service_scalable_calloc<int, cpu>(clNum_);
+        cValues  = service_scalable_calloc<algorithmFPType, cpu>(clNum_);
+        cIndices = service_scalable_calloc<size_t, cpu>(clNum_);
+
+        service_memset_seq<algorithmFPType, cpu>(mkl_buff, 0.0, max_block_size_ * clNum_);
+        service_memset_seq<algorithmFPType, cpu>(cS1,      0.0, clNum_ * dim_);
+        service_memset_seq<int,             cpu>(cS0,      0,   clNum_);
+        service_memset_seq<algorithmFPType, cpu>(cValues,  0.0, clNum_);
+        service_memset_seq<size_t,          cpu>(cIndices, 0,   clNum_);
     }
 
     ~tls_task_t()
@@ -80,11 +86,27 @@ struct tls_task_t
         {
             service_scalable_free<size_t, cpu>(cIndices);
         }
+        if (tmpValuesPtr)
+        {
+            service_scalable_free<algorithmFPType, cpu>(tmpValuesPtr);
+        }
+        if (tmpIndicesPtr)
+        {
+            service_scalable_free<size_t, cpu>(tmpIndicesPtr);
+        }
+        if (totalValues)
+        {
+            service_scalable_free<algorithmFPType, cpu>(totalValues);
+        }
+        if (totalIndices)
+        {
+            service_scalable_free<size_t, cpu>(totalIndices);
+        }
     }
 
-    static tls_task_t<algorithmFPType, cpu> * create(int dim, int clNum, int max_block_size)
+    static tls_task_t<algorithmFPType, cpu> * create(int dim_, int clNum_, int max_block_size_)
     {
-        tls_task_t<algorithmFPType, cpu> * result = new tls_task_t<algorithmFPType, cpu>(dim, clNum, max_block_size);
+        tls_task_t<algorithmFPType, cpu> * result = new tls_task_t<algorithmFPType, cpu>(dim_, clNum_, max_block_size_);
         if (!result)
         {
             return nullptr;
@@ -97,13 +119,30 @@ struct tls_task_t
         return result;
     }
 
-    algorithmFPType * mkl_buff = nullptr;
-    algorithmFPType * cS1      = nullptr;
-    int * cS0                  = nullptr;
-    algorithmFPType goalFunc   = 0.0;
-    size_t cNum                = 0;
-    algorithmFPType * cValues  = nullptr;
-    size_t * cIndices          = nullptr;
+    void restart(int dim, int clNum, int max_block_size)
+    {
+        goalFunc = 0.0;
+        service_memset_seq<algorithmFPType, cpu>(mkl_buff, 0.0, max_block_size * clNum);
+        service_memset_seq<algorithmFPType, cpu>(cS1,      0.0, clNum * dim);
+        service_memset_seq<int,             cpu>(cS0,      0,   clNum);
+    }
+
+    int dim            = 0;
+    int clNum          = 0;
+    int max_block_size = 0;
+
+    algorithmFPType * mkl_buff    = nullptr;
+    algorithmFPType * cS1         = nullptr;
+    int * cS0                     = nullptr;
+    algorithmFPType goalFunc      = 0.0;
+    size_t cNum                   = 0;
+    algorithmFPType * cValues     = nullptr;
+    size_t * cIndices             = nullptr;
+    algorithmFPType *tmpValuesPtr = nullptr;
+    size_t *tmpIndicesPtr         = nullptr;
+    size_t totalNum               = 0;
+    algorithmFPType *totalValues  = nullptr;
+    size_t *totalIndices          = nullptr;
 };
 
 template <typename algorithmFPType>
@@ -125,17 +164,19 @@ struct task_t
 {
     DAAL_NEW_DELETE();
 
-    task_t(int _dim, int _clNum, algorithmFPType * _centroids)
+    task_t(int _dim, int _clNum, algorithmFPType * _centroids, int *_cS0, algorithmFPType *_cS1,
+           algorithmFPType *_cValues, size_t *_cIndices, size_t &_cNum) : resultNum(_cNum)
     {
         dim            = _dim;
         clNum          = _clNum;
         cCenters       = _centroids;
         max_block_size = 512;
 
-        /* Allocate memory for all arrays inside TLS */
-        tls_task = new daal::tls<tls_task_t<algorithmFPType, cpu> *>([=]() -> tls_task_t<algorithmFPType, cpu> * {
-            return tls_task_t<algorithmFPType, cpu>::create(dim, clNum, max_block_size);
-        }); /* Allocate memory for all arrays inside TLS: end */
+        resultGoalFunc = 0;
+        resultS0 = _cS0;;
+        resultS1 = _cS1;
+        resultValues = _cValues;
+        resultIndices = _cIndices;
 
         clSq = service_scalable_calloc<algorithmFPType, cpu>(clNum);
         if (clSq)
@@ -156,21 +197,17 @@ struct task_t
 
     ~task_t()
     {
-        if (tls_task)
-        {
-            tls_task->reduce([=](tls_task_t<algorithmFPType, cpu> * tt) -> void { delete tt; });
-            delete tls_task;
-        }
         if (clSq)
         {
             service_scalable_free<algorithmFPType, cpu>(clSq);
         }
     }
 
-    static SharedPtr<task_t<algorithmFPType, cpu> > create(int dim, int clNum, algorithmFPType * centroids)
+    static SharedPtr<task_t<algorithmFPType, cpu> > create(int dim, int clNum, algorithmFPType * centroids, int *_cS0,
+        algorithmFPType *_cS1, algorithmFPType *_cValues, size_t *_cIndices, size_t &_cNum)
     {
-        SharedPtr<task_t<algorithmFPType, cpu> > result(new task_t<algorithmFPType, cpu>(dim, clNum, centroids));
-        if (result.get() && (!result->tls_task || !result->clSq))
+        SharedPtr<task_t<algorithmFPType, cpu> > result(new task_t<algorithmFPType, cpu>(dim, clNum, centroids, _cS0, _cS1, _cValues, _cIndices, _cNum));
+        if (result.get() && (!result->clSq))
         {
             result.reset();
         }
@@ -184,25 +221,23 @@ struct task_t
     template <Method method>
     Status addNTToTaskThreaded(const NumericTable * const ntData, const algorithmFPType * const catCoef, NumericTable * ntAssign = nullptr);
 
-    template <typename centroidsFPType>
-    int kmeansUpdateCluster(int jidx, centroidsFPType * s1);
-
-    template <Method method>
-    void kmeansComputeCentroids(int * clusterS0, algorithmFPType * clusterS1, double * auxData);
-
     void kmeansInsertCandidate(tls_task_t<algorithmFPType, cpu> * tt, algorithmFPType value, size_t index);
-
-    Status kmeansComputeCentroidsCandidates(algorithmFPType * cValues, size_t * cIndices, size_t & cNum);
 
     void kmeansClearClusters(algorithmFPType * goalFunc);
 
-    daal::tls<tls_task_t<algorithmFPType, cpu> *> * tls_task;
     algorithmFPType * clSq;
     algorithmFPType * cCenters;
 
     int dim;
     int clNum;
     int max_block_size;
+
+    algorithmFPType resultGoalFunc;
+    int    *resultS0;
+    algorithmFPType *resultS1;
+    algorithmFPType *resultValues;
+    size_t *resultIndices;
+    size_t& resultNum;
 
     typedef typename Fp2IntSize<algorithmFPType>::IntT algIntType;
 };
@@ -218,106 +253,246 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedDense(const NumericTable
     nBlocks += (nBlocks * blockSizeDeafult != n);
 
     SafeStatus safeStat;
-    daal::threader_for(nBlocks, nBlocks, [=, &safeStat](const int k) {
-        struct tls_task_t<algorithmFPType, cpu> * tt = tls_task->local();
-        DAAL_CHECK_MALLOC_THR(tt);
-        const size_t blockSize = (k == nBlocks - 1) ? n - k * blockSizeDeafult : blockSizeDeafult;
+    int result = 0;
 
-        ReadRows<algorithmFPType, cpu> mtData(*const_cast<NumericTable *>(ntData), k * blockSizeDeafult, blockSize);
-        DAAL_CHECK_BLOCK_STATUS_THR(mtData);
-        const algorithmFPType * const data = mtData.get();
-
-        const size_t p                           = dim;
-        const size_t nClusters                   = clNum;
-        const algorithmFPType * const inClusters = cCenters;
-        const algorithmFPType * const clustersSq = clSq;
-
-        algorithmFPType * trg        = &(tt->goalFunc);
-        algorithmFPType * x_clusters = tt->mkl_buff;
-
-        int * cS0             = tt->cS0;
-        algorithmFPType * cS1 = tt->cS1;
-
-        int * assignments = nullptr;
-        WriteOnlyRows<int, cpu> assignBlock(ntAssign, k * blockSizeDeafult, blockSize);
-        if (ntAssign)
+    using LocalType = tls_task_t<algorithmFPType, cpu>;
+    LocalType* total = (LocalType*)daal::parallel_deterministic_reduce(n, blockSizeDeafult,
+        [&] (void** tt)
         {
-            DAAL_CHECK_BLOCK_STATUS_THR(assignBlock);
-            assignments = assignBlock.get();
-        }
-
-        const char transa           = 't';
-        const char transb           = 'n';
-        const DAAL_INT _m           = blockSize;
-        const DAAL_INT _n           = nClusters;
-        const DAAL_INT _k           = p;
-        const algorithmFPType alpha = -1.0;
-        const DAAL_INT lda          = p;
-        const DAAL_INT ldy          = p;
-        const algorithmFPType beta  = 1.0;
-        const DAAL_INT ldaty        = blockSize;
-
-        for (size_t j = 0; j < nClusters; j++)
+            *tt = static_cast<void*>(LocalType::create(dim, clNum, max_block_size));
+        }, [&] (void** tt)
         {
-            PRAGMA_IVDEP
-            PRAGMA_VECTOR_ALWAYS
-            for (size_t i = 0; i < blockSize; i++)
+            delete static_cast<LocalType*>(*tt);
+        }, [&] (void* tt_, int begin, int end)
+        {
+            LocalType* tt = static_cast<LocalType*>(tt_);
+
+            tt->restart(dim, clNum, max_block_size);
+            const size_t blockSize = end - begin;
+
+            ReadRows<algorithmFPType, cpu> mtData(*const_cast<NumericTable *>(ntData), begin, blockSize);
+            const algorithmFPType * const data = mtData.get();
+
+            const size_t p                           = dim;
+            const size_t nClusters                   = clNum;
+            const algorithmFPType * const inClusters = cCenters;
+            const algorithmFPType * const clustersSq = clSq;
+
+            algorithmFPType * trg        = &(tt->goalFunc);
+            algorithmFPType * x_clusters = tt->mkl_buff;
+
+            int * cS0             = tt->cS0;
+            algorithmFPType * cS1 = tt->cS1;
+
+            int * assignments = nullptr;
+            WriteOnlyRows<int, cpu> assignBlock(ntAssign, begin, blockSize);
+            if (ntAssign)
             {
-                x_clusters[i + j * blockSize] = clustersSq[j];
+                assignments = assignBlock.get();
             }
-        }
 
-        Blas<algorithmFPType, cpu>::xxgemm(&transa, &transb, &_m, &_n, &_k, &alpha, data, &lda, inClusters, &ldy, &beta, x_clusters, &ldaty);
+            const char transa           = 't';
+            const char transb           = 'n';
+            const DAAL_INT _m           = blockSize;
+            const DAAL_INT _n           = nClusters;
+            const DAAL_INT _k           = p;
+            const algorithmFPType alpha = -1.0;
+            const DAAL_INT lda          = p;
+            const DAAL_INT ldy          = p;
+            const algorithmFPType beta  = 1.0;
+            const DAAL_INT ldaty        = blockSize;
 
-        PRAGMA_ICC_OMP(simd simdlen(16))
-        for (algIntType i = 0; i < (algIntType)blockSize; i++)
-        {
-            algorithmFPType minGoalVal = x_clusters[i];
-            algIntType minIdx          = 0;
-
-            for (algIntType j = 0; j < (algIntType)nClusters; j++)
+            for (size_t j = 0; j < nClusters; j++)
             {
-                algorithmFPType localGoalVal = x_clusters[i + j * blockSize];
-                if (localGoalVal < minGoalVal)
+                PRAGMA_IVDEP
+                PRAGMA_VECTOR_ALWAYS
+                for (size_t i = 0; i < blockSize; i++)
                 {
-                    minGoalVal = localGoalVal;
-                    minIdx     = j;
+                    x_clusters[i + j * blockSize] = clustersSq[j];
                 }
             }
 
-            minGoalVal *= 2.0;
+            Blas<algorithmFPType, cpu>::xxgemm(&transa, &transb, &_m, &_n, &_k, &alpha, data, &lda, inClusters, &ldy, &beta, x_clusters, &ldaty);
 
-            *((algIntType *)&(x_clusters[i])) = minIdx;
-            x_clusters[i + blockSize]         = minGoalVal;
-        }
+            PRAGMA_ICC_OMP(simd simdlen(16))
+            for (algIntType i = 0; i < (algIntType)blockSize; i++)
+            {
+                algorithmFPType minGoalVal = x_clusters[i];
+                algIntType minIdx          = 0;
 
-        algorithmFPType goal = algorithmFPType(0);
-        for (size_t i = 0; i < blockSize; i++)
+                for (algIntType j = 0; j < (algIntType)nClusters; j++)
+                {
+                    algorithmFPType localGoalVal = x_clusters[i + j * blockSize];
+                    if (localGoalVal < minGoalVal)
+                    {
+                        minGoalVal = localGoalVal;
+                        minIdx     = j;
+                    }
+                }
+
+                minGoalVal *= 2.0;
+
+                *((algIntType *)&(x_clusters[i])) = minIdx;
+                x_clusters[i + blockSize]         = minGoalVal;
+            }
+
+            algorithmFPType goal = algorithmFPType(0);
+            for (size_t i = 0; i < blockSize; i++)
+            {
+                const size_t minIdx        = *((algIntType *)&(x_clusters[i]));
+                algorithmFPType minGoalVal = x_clusters[i + blockSize];
+
+                PRAGMA_IVDEP
+                for (size_t j = 0; j < p; j++)
+                {
+                    cS1[minIdx * p + j] += data[i * p + j];
+                    minGoalVal += data[i * p + j] * data[i * p + j];
+                }
+
+                kmeansInsertCandidate(tt, minGoalVal, begin + i);
+                cS0[minIdx]++;
+
+                goal += minGoalVal;
+
+                if (ntAssign)
+                {
+                    DAAL_ASSERT(minIdx <= services::internal::MaxVal<int>::get())
+                    assignments[i] = (int)minIdx;
+                }
+            } /* for (size_t i = 0; i < blockSize; i++) */
+
+            *trg += goal;
+        }, [&] (const void* lhs_, const void* rhs_)
         {
-            const size_t minIdx        = *((algIntType *)&(x_clusters[i]));
-            algorithmFPType minGoalVal = x_clusters[i + blockSize];
+            const LocalType* lhs = static_cast<const LocalType*>(lhs_);
+            const LocalType* rhs = static_cast<const LocalType*>(rhs_);
 
-            PRAGMA_IVDEP
-            for (size_t j = 0; j < p; j++)
+            // kmeansComputeCentroids
+            for (size_t i = 0; i < clNum; i++)
             {
-                cS1[minIdx * p + j] += data[i * p + j];
-                minGoalVal += data[i * p + j] * data[i * p + j];
+                lhs->cS0[i] += rhs->cS0[i];
+
+                PRAGMA_IVDEP
+                PRAGMA_VECTOR_ALWAYS
+                for (size_t j = 0; j < dim; j++)
+                {
+                    lhs->cS1[i * dim + j] += rhs->cS1[i * dim + j];
+                }
             }
+            // kmeansComputeCentroids
 
-            kmeansInsertCandidate(tt, minGoalVal, k * blockSizeDeafult + i);
-            cS0[minIdx]++;
+            // kmeansComputeCentroidsCandidates
+            algorithmFPType *tmpValuesPtr = nullptr;
+            size_t *tmpIndicesPtr = nullptr;
 
-            goal += minGoalVal;
-
-            if (ntAssign)
+            auto reduceValuesAndIndices = [&] (algorithmFPType *cValues, size_t *cIndices, size_t& cNum,
+                                               algorithmFPType *lcValues, size_t *lcIndices, size_t& lcNum) -> void
             {
-                DAAL_ASSERT(minIdx <= services::internal::MaxVal<int>::get())
-                assignments[i] = (int)minIdx;
-            }
-        } /* for (size_t i = 0; i < blockSize; i++) */
+                size_t cPos = 0;
+                size_t lcPos = 0;
 
-        *trg += goal;
-    }); /* daal::threader_for( nBlocks, nBlocks, [=](int k) */
+                while (cPos + lcPos < clNum && (cPos < cNum || lcPos < lcNum))
+                {
+                    if (cPos < cNum && (lcPos == lcNum || cValues[cPos] > lcValues[lcPos]))
+                    {
+                        tmpValuesPtr[cPos + lcPos] = cValues[cPos];
+                        tmpIndicesPtr[cPos + lcPos] = cIndices[cPos];
+                        cPos++;
+                    }
+                    else
+                    {
+                        tmpValuesPtr[cPos + lcPos] = lcValues[lcPos];
+                        tmpIndicesPtr[cPos + lcPos] = lcIndices[lcPos];
+                        lcPos++;
+                    }
+                }
+                cNum = cPos + lcPos;
+                result |= daal::services::internal::daal_memcpy_s(cValues, cNum * sizeof(algorithmFPType), tmpValuesPtr, cNum * sizeof(algorithmFPType));
+                result |= daal::services::internal::daal_memcpy_s(cIndices, cNum * sizeof(size_t), tmpIndicesPtr, cNum * sizeof(size_t));
+            };
+
+            if (!lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
+            {
+                const_cast<LocalType*>(lhs)->tmpValuesPtr  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                const_cast<LocalType*>(lhs)->tmpIndicesPtr = service_scalable_calloc<size_t, cpu>(clNum);
+                const_cast<LocalType*>(lhs)->totalValues   = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                const_cast<LocalType*>(lhs)->totalIndices  = service_scalable_calloc<size_t, cpu>(clNum);
+
+                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->tmpValuesPtr,  0.0, clNum);
+                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->tmpIndicesPtr, 0,   clNum);
+                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->totalValues,   0.0, clNum);
+                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->totalIndices,  0,   clNum);
+
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+            }
+            else if (lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
+            {
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+            }
+            else if (!lhs->tmpValuesPtr && rhs->tmpValuesPtr)
+            {
+                const_cast<LocalType*>(lhs)->tmpValuesPtr  = rhs->tmpValuesPtr;
+                const_cast<LocalType*>(lhs)->tmpIndicesPtr = rhs->tmpIndicesPtr;
+                const_cast<LocalType*>(lhs)->totalValues   = rhs->totalValues;
+                const_cast<LocalType*>(lhs)->totalIndices  = rhs->totalIndices;
+                const_cast<LocalType*>(lhs)->totalNum      = rhs->totalNum;
+
+                const_cast<LocalType*>(rhs)->tmpValuesPtr  = nullptr;
+                const_cast<LocalType*>(rhs)->tmpIndicesPtr = nullptr;
+                const_cast<LocalType*>(rhs)->totalValues   = nullptr;
+                const_cast<LocalType*>(rhs)->totalIndices  = nullptr;
+
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
+            }
+            else
+            {
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->totalValues, const_cast<LocalType*>(rhs)->totalIndices, const_cast<LocalType*>(rhs)->totalNum);
+            }
+            // kmeansComputeCentroidsCandidates
+
+            // goalFunc
+            const_cast<LocalType*>(lhs)->goalFunc += rhs->goalFunc;
+            // goalFunc
+        }
+    );
+
+    resultGoalFunc = total->goalFunc;
+
+    PRAGMA_IVDEP
+    PRAGMA_VECTOR_ALWAYS
+    for (size_t i = 0; i < clNum; ++i)
+        resultS0[i] = (total->cS0)[i];
+
+    PRAGMA_IVDEP
+    PRAGMA_VECTOR_ALWAYS
+    for (size_t i = 0; i < clNum * dim; ++i)
+        resultS1[i] = (total->cS1)[i];
+
+    PRAGMA_IVDEP
+    PRAGMA_VECTOR_ALWAYS
+    for (size_t i = 0; i < clNum; ++i)
+        resultValues[i] = (total->cValues)[i];
+
+    PRAGMA_IVDEP
+    PRAGMA_VECTOR_ALWAYS
+    for (size_t i = 0; i < clNum; ++i)
+        resultIndices[i] = (total->cIndices)[i];
+
+    resultNum = total->cNum;
+
     return safeStat.detach();
 }
 
@@ -334,87 +509,201 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedCSR(const NumericTable *
     nBlocks += (nBlocks * blockSizeDeafult != n);
 
     SafeStatus safeStat;
-    daal::threader_for(nBlocks, nBlocks, [=, &safeStat](const int k) {
-        struct tls_task_t<algorithmFPType, cpu> * tt = tls_task->local();
-        DAAL_CHECK_MALLOC_THR(tt);
+    int result = 0;
 
-        const size_t blockSize = (k == nBlocks - 1) ? n - k * blockSizeDeafult : blockSizeDeafult;
-
-        ReadRowsCSR<algorithmFPType, cpu> dataBlock(ntDataCsr, k * blockSizeDeafult, blockSize);
-        DAAL_CHECK_BLOCK_STATUS_THR(dataBlock);
-
-        const algorithmFPType * const data = dataBlock.values();
-        const size_t * const colIdx        = dataBlock.cols();
-        const size_t * const rowIdx        = dataBlock.rows();
-
-        const size_t p                     = dim;
-        const size_t nClusters             = clNum;
-        const algorithmFPType * inClusters = cCenters;
-        const algorithmFPType * clustersSq = clSq;
-
-        algorithmFPType * trg        = &(tt->goalFunc);
-        algorithmFPType * x_clusters = tt->mkl_buff;
-
-        int * cS0             = tt->cS0;
-        algorithmFPType * cS1 = tt->cS1;
-
-        int * assignments = nullptr;
-        WriteOnlyRows<int, cpu> assignBlock(ntAssign, k * blockSizeDeafult, blockSize);
-        if (ntAssign)
+    using LocalType = tls_task_t<algorithmFPType, cpu>;
+    LocalType* total = (LocalType*)daal::parallel_deterministic_reduce(n, blockSizeDeafult,
+        [&] (void** tt)
         {
-            DAAL_CHECK_BLOCK_STATUS_THR(assignBlock);
-            assignments = assignBlock.get();
-        }
-
-        const char transa           = 'n';
-        const DAAL_INT _n           = blockSize;
-        const DAAL_INT _p           = p;
-        const DAAL_INT _c           = nClusters;
-        const algorithmFPType alpha = 1.0;
-        const algorithmFPType beta  = 0.0;
-        const char matdescra[6]     = { 'G', 0, 0, 'F', 0, 0 };
-
-        SpBlas<algorithmFPType, cpu>::xxcsrmm(&transa, &_n, &_c, &_p, &alpha, matdescra, data, (DAAL_INT *)colIdx, (DAAL_INT *)rowIdx, inClusters,
-                                              &_p, &beta, x_clusters, &_n);
-
-        size_t csrCursor = 0;
-        for (size_t i = 0; i < blockSize; i++)
+            *tt = static_cast<void*>(LocalType::create(dim, clNum, max_block_size));
+        }, [&] (void** tt)
         {
-            algorithmFPType minGoalVal = clustersSq[0] - x_clusters[i];
-            size_t minIdx              = 0;
+            delete static_cast<LocalType*>(*tt);
+        }, [&] (void* tt_, int begin, int end)
+        {
+            LocalType* tt = static_cast<LocalType*>(tt_);
 
-            for (size_t j = 0; j < nClusters; j++)
-            {
-                if (minGoalVal > clustersSq[j] - x_clusters[i + j * blockSize])
-                {
-                    minGoalVal = clustersSq[j] - x_clusters[i + j * blockSize];
-                    minIdx     = j;
-                }
-            }
+            tt->restart(dim, clNum, max_block_size);
+            const size_t blockSize = end - begin;
 
-            minGoalVal *= 2.0;
+            ReadRowsCSR<algorithmFPType, cpu> dataBlock(ntDataCsr, begin, blockSize);
 
-            size_t valuesNum = rowIdx[i + 1] - rowIdx[i];
-            for (size_t j = 0; j < valuesNum; j++)
-            {
-                cS1[minIdx * p + colIdx[csrCursor] - 1] += data[csrCursor];
-                minGoalVal += data[csrCursor] * data[csrCursor];
-                csrCursor++;
-            }
+            const algorithmFPType * const data = dataBlock.values();
+            const size_t * const colIdx        = dataBlock.cols();
+            const size_t * const rowIdx        = dataBlock.rows();
 
-            kmeansInsertCandidate(tt, minGoalVal, k * blockSizeDeafult + i);
+            const size_t p                     = dim;
+            const size_t nClusters             = clNum;
+            const algorithmFPType * inClusters = cCenters;
+            const algorithmFPType * clustersSq = clSq;
 
-            *trg += minGoalVal;
+            algorithmFPType * trg        = &(tt->goalFunc);
+            algorithmFPType * x_clusters = tt->mkl_buff;
 
-            cS0[minIdx]++;
+            int * cS0             = tt->cS0;
+            algorithmFPType * cS1 = tt->cS1;
 
+            int * assignments = nullptr;
+            WriteOnlyRows<int, cpu> assignBlock(ntAssign, begin, blockSize);
             if (ntAssign)
             {
-                DAAL_ASSERT(minIdx <= services::internal::MaxVal<int>::get())
-                assignments[i] = (int)minIdx;
+                assignments = assignBlock.get();
             }
+
+            const char transa           = 'n';
+            const DAAL_INT _n           = blockSize;
+            const DAAL_INT _p           = p;
+            const DAAL_INT _c           = nClusters;
+            const algorithmFPType alpha = 1.0;
+            const algorithmFPType beta  = 0.0;
+            const char matdescra[6]     = { 'G', 0, 0, 'F', 0, 0 };
+
+            SpBlas<algorithmFPType, cpu>::xxcsrmm(&transa, &_n, &_c, &_p, &alpha, matdescra, data, (DAAL_INT *)colIdx, (DAAL_INT *)rowIdx, inClusters,
+                                                      &_p, &beta, x_clusters, &_n);
+
+        size_t csrCursor = 0;
+            for (size_t i = 0; i < blockSize; i++)
+            {
+                algorithmFPType minGoalVal = clustersSq[0] - x_clusters[i];
+                size_t minIdx              = 0;
+
+                for (size_t j = 0; j < nClusters; j++)
+                {
+                    if (minGoalVal > clustersSq[j] - x_clusters[i + j * blockSize])
+                    {
+                        minGoalVal = clustersSq[j] - x_clusters[i + j * blockSize];
+                        minIdx     = j;
+                    }
+                }
+
+                minGoalVal *= 2.0;
+
+                size_t valuesNum = rowIdx[i + 1] - rowIdx[i];
+                for (size_t j = 0; j < valuesNum; j++)
+                {
+                    cS1[minIdx * p + colIdx[csrCursor] - 1] += data[csrCursor];
+                    minGoalVal += data[csrCursor] * data[csrCursor];
+                    csrCursor++;
+                }
+
+                kmeansInsertCandidate(tt, minGoalVal, begin + i);
+
+                *trg += minGoalVal;
+
+                cS0[minIdx]++;
+
+                if (ntAssign)
+                {
+                    DAAL_ASSERT(minIdx <= services::internal::MaxVal<int>::get())
+                    assignments[i] = (int)minIdx;
+                }
+            }
+        }, [&] (const void* lhs_, const void* rhs_)
+        {
+            const LocalType* lhs = static_cast<const LocalType*>(lhs_);
+            const LocalType* rhs = static_cast<const LocalType*>(rhs_);
+
+            // kmeansComputeCentroids
+            for (size_t i = 0; i < clNum; i++)
+            {
+                lhs->cS0[i] += rhs->cS0[i];
+
+                PRAGMA_IVDEP
+                PRAGMA_VECTOR_ALWAYS
+                for (size_t j = 0; j < dim; j++)
+                {
+                    lhs->cS1[i * dim + j] += rhs->cS1[i * dim + j];
+                }
+            }
+            // kmeansComputeCentroids
+
+            // kmeansComputeCentroidsCandidates
+            algorithmFPType *tmpValuesPtr = nullptr;
+            size_t *tmpIndicesPtr = nullptr;
+
+            auto reduceValuesAndIndices = [&] (algorithmFPType *cValues, size_t *cIndices, size_t& cNum,
+                                               algorithmFPType *lcValues, size_t *lcIndices, size_t& lcNum) -> void
+            {
+                size_t cPos = 0;
+                size_t lcPos = 0;
+
+                while (cPos + lcPos < clNum && (cPos < cNum || lcPos < lcNum))
+                {
+                    if (cPos < cNum && (lcPos == lcNum || cValues[cPos] > lcValues[lcPos]))
+                    {
+                        tmpValuesPtr[cPos + lcPos] = cValues[cPos];
+                        tmpIndicesPtr[cPos + lcPos] = cIndices[cPos];
+                        cPos++;
+                    }
+                    else
+                    {
+                        tmpValuesPtr[cPos + lcPos] = lcValues[lcPos];
+                        tmpIndicesPtr[cPos + lcPos] = lcIndices[lcPos];
+                        lcPos++;
+                    }
+                }
+                cNum = cPos + lcPos;
+                result |= daal::services::internal::daal_memcpy_s(cValues, cNum * sizeof(algorithmFPType), tmpValuesPtr, cNum * sizeof(algorithmFPType));
+                result |= daal::services::internal::daal_memcpy_s(cIndices, cNum * sizeof(size_t), tmpIndicesPtr, cNum * sizeof(size_t));
+            };
+
+            if (!lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
+            {
+                const_cast<LocalType*>(lhs)->tmpValuesPtr  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                const_cast<LocalType*>(lhs)->tmpIndicesPtr = service_scalable_calloc<size_t, cpu>(clNum);
+                const_cast<LocalType*>(lhs)->totalValues   = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                const_cast<LocalType*>(lhs)->totalIndices  = service_scalable_calloc<size_t, cpu>(clNum);
+
+                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->tmpValuesPtr,  0.0, clNum);
+                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->tmpIndicesPtr, 0,   clNum);
+                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->totalValues,   0.0, clNum);
+                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->totalIndices,  0,   clNum);
+
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+            }
+            else if (lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
+            {
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+            }
+            else if (!lhs->tmpValuesPtr && rhs->tmpValuesPtr)
+            {
+                const_cast<LocalType*>(lhs)->tmpValuesPtr  = rhs->tmpValuesPtr;
+                const_cast<LocalType*>(lhs)->tmpIndicesPtr = rhs->tmpIndicesPtr;
+                const_cast<LocalType*>(lhs)->totalValues   = rhs->totalValues;
+                const_cast<LocalType*>(lhs)->totalIndices  = rhs->totalIndices;
+                const_cast<LocalType*>(lhs)->totalNum      = rhs->totalNum;
+
+                const_cast<LocalType*>(rhs)->tmpValuesPtr  = nullptr;
+                const_cast<LocalType*>(rhs)->tmpIndicesPtr = nullptr;
+                const_cast<LocalType*>(rhs)->totalValues   = nullptr;
+                const_cast<LocalType*>(rhs)->totalIndices  = nullptr;
+
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
+            }
+            else
+            {
+                tmpValuesPtr  = lhs->tmpValuesPtr;
+                tmpIndicesPtr = lhs->tmpIndicesPtr;
+
+                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->totalValues, const_cast<LocalType*>(rhs)->totalIndices, const_cast<LocalType*>(rhs)->totalNum);
+            }
+            // kmeansComputeCentroidsCandidates
+
+            // goalFunc
+            const_cast<LocalType*>(lhs)->goalFunc += rhs->goalFunc;
+            // goalFunc
         }
-    });
+    );
     return safeStat.detach();
 }
 
@@ -433,56 +722,6 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreaded(const NumericTable * co
     }
     DAAL_ASSERT(false);
     return Status();
-}
-
-template <typename algorithmFPType, CpuType cpu>
-template <typename centroidsFPType>
-int task_t<algorithmFPType, cpu>::kmeansUpdateCluster(int jidx, centroidsFPType * s1)
-{
-    int idx = (int)jidx;
-
-    int s0 = 0;
-
-    tls_task->reduce([&](tls_task_t<algorithmFPType, cpu> * tt) -> void { s0 += tt->cS0[idx]; });
-
-    tls_task->reduce([=](tls_task_t<algorithmFPType, cpu> * tt) -> void {
-        int j;
-        PRAGMA_IVDEP
-        for (j = 0; j < dim; j++)
-        {
-            s1[j] += tt->cS1[idx * dim + j];
-        }
-    });
-    return s0;
-}
-
-template <typename algorithmFPType, CpuType cpu>
-template <Method method>
-void task_t<algorithmFPType, cpu>::kmeansComputeCentroids(int * clusterS0, algorithmFPType * clusterS1, double * auxData)
-{
-    if (method == defaultDense && auxData)
-    {
-        for (size_t i = 0; i < clNum; i++)
-        {
-            service_memset_seq<double, cpu>(auxData, 0.0, dim);
-            clusterS0[i] = kmeansUpdateCluster<double>(i, auxData);
-
-            PRAGMA_IVDEP
-            PRAGMA_VECTOR_ALWAYS
-            for (size_t j = 0; j < dim; j++)
-            {
-                clusterS1[i * dim + j] = auxData[j];
-            }
-        }
-    }
-    else
-    {
-        for (size_t i = 0; i < clNum; i++)
-        {
-            service_memset_seq<algorithmFPType, cpu>(&clusterS1[i * dim], 0.0, dim);
-            clusterS0[i] = kmeansUpdateCluster<algorithmFPType>(i, &clusterS1[i * dim]);
-        }
-    }
 }
 
 template <typename algorithmFPType, CpuType cpu>
@@ -511,62 +750,12 @@ void task_t<algorithmFPType, cpu>::kmeansInsertCandidate(tls_task_t<algorithmFPT
 }
 
 template <typename algorithmFPType, CpuType cpu>
-Status task_t<algorithmFPType, cpu>::kmeansComputeCentroidsCandidates(algorithmFPType * cValues, size_t * cIndices, size_t & cNum)
-{
-    cNum = 0;
-
-    TArray<algorithmFPType, cpu> tmpValues(clNum);
-    TArray<size_t, cpu> tmpIndices(clNum);
-    DAAL_CHECK_MALLOC(tmpValues.get() && tmpIndices.get());
-
-    algorithmFPType * tmpValuesPtr = tmpValues.get();
-    size_t * tmpIndicesPtr         = tmpIndices.get();
-    int result                     = 0;
-
-    tls_task->reduce([&](tls_task_t<algorithmFPType, cpu> * tt) -> void {
-        size_t lcNum               = tt->cNum;
-        algorithmFPType * lcValues = tt->cValues;
-        size_t * lcIndices         = tt->cIndices;
-
-        size_t cPos  = 0;
-        size_t lcPos = 0;
-
-        while (cPos + lcPos < clNum && (cPos < cNum || lcPos < lcNum))
-        {
-            if (cPos < cNum && (lcPos == lcNum || cValues[cPos] > lcValues[lcPos]))
-            {
-                tmpValuesPtr[cPos + lcPos]  = cValues[cPos];
-                tmpIndicesPtr[cPos + lcPos] = cIndices[cPos];
-                cPos++;
-            }
-            else
-            {
-                tmpValuesPtr[cPos + lcPos]  = lcValues[lcPos];
-                tmpIndicesPtr[cPos + lcPos] = lcIndices[lcPos];
-                lcPos++;
-            }
-        }
-        cNum = cPos + lcPos;
-        result |= daal::services::internal::daal_memcpy_s(cValues, cNum * sizeof(algorithmFPType), tmpValuesPtr, cNum * sizeof(algorithmFPType));
-        result |= daal::services::internal::daal_memcpy_s(cIndices, cNum * sizeof(size_t), tmpIndicesPtr, cNum * sizeof(size_t));
-    });
-
-    return (!result) ? services::Status() : services::Status(services::ErrorMemoryCopyFailedInternal);
-}
-
-template <typename algorithmFPType, CpuType cpu>
 void task_t<algorithmFPType, cpu>::kmeansClearClusters(algorithmFPType * goalFunc)
 {
     if (clNum != 0)
     {
         clNum = 0;
-
-        if (goalFunc != 0)
-        {
-            *goalFunc = (algorithmFPType)(0.0);
-
-            tls_task->reduce([=](tls_task_t<algorithmFPType, cpu> * tt) -> void { (*goalFunc) += tt->goalFunc; });
-        }
+        *goalFunc = resultGoalFunc;
     }
 }
 

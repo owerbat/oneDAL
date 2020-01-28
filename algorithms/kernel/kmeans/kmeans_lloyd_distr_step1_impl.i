@@ -113,7 +113,9 @@ Status KMeansDistributedStep1Kernel<method, algorithmFPType, cpu>::compute(size_
     Status s;
     algorithmFPType oldTargetFunc = (algorithmFPType)0.0;
     {
-        SharedPtr<task_t<algorithmFPType, cpu> > task = task_t<algorithmFPType, cpu>::create(p, nClusters, initClusters);
+        size_t cNum;
+        SharedPtr<task_t<algorithmFPType, cpu> > task = task_t<algorithmFPType, cpu>::create(p, nClusters, initClusters,
+            clusterS0, clusterS1, cValues, cIndices.get(), cNum);
         DAAL_CHECK(task.get(), services::ErrorMemoryAllocationFailed);
         DAAL_ASSERT(task);
 
@@ -139,10 +141,6 @@ Status KMeansDistributedStep1Kernel<method, algorithmFPType, cpu>::compute(size_
             DAAL_CHECK(dS1.get(), services::ErrorMemoryAllocationFailed);
         }
 
-        task->template kmeansComputeCentroids<method>(clusterS0, clusterS1, dS1.get());
-
-        size_t cNum;
-        DAAL_CHECK_STATUS(s, task->kmeansComputeCentroidsCandidates(cValues, cIndices.get(), cNum));
         for (size_t i = 0; i < cNum; i++)
         {
             ReadRows<algorithmFPType, cpu> mtRow(ntData, cIndices.get()[i], 1);

@@ -407,21 +407,24 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     const size_t disp = dim * yDim;
 
                     int len = dim*yDim + (nTheta)*(nTheta);
-                    algorithmFPType* total = (algorithmFPType*)daal::parallel_deterministic_reduce(nDataRows, blockSize,
+                    algorithmFPType* total = static_cast<algorithmFPType*>(daal::parallel_deterministic_reduce(nDataRows, blockSize,
                         [&] (void** value)
                         {
                             *value = static_cast<void*>(services::internal::service_scalable_malloc<algorithmFPType, cpu>(len));
-                            services::internal::service_memset<algorithmFPType, cpu>((algorithmFPType*)(*value), 0, len);
+                            services::internal::service_memset<algorithmFPType, cpu>(static_cast<algorithmFPType*>(*value), 0, len);
+                        }, [&] (void** value)
+                        {
+                            services::internal::service_scalable_free<algorithmFPType, cpu>(static_cast<algorithmFPType*>(*value));
                         }, [&] (void* local, int begin, int end)
                         {
                             PRAGMA_IVDEP
                             PRAGMA_VECTOR_ALWAYS
                             for(int j = 0; j < len; j++)
                             {
-                                ((algorithmFPType*)local)[j] = 0;
+                                static_cast<algorithmFPType*>(local)[j] = 0;
                             }
 
-                            algorithmFPType *localXY = (algorithmFPType*)local;
+                            algorithmFPType *localXY = static_cast<algorithmFPType*>(local);
                             algorithmFPType *localGram = localXY + disp;
                             const size_t startRow = begin;
                             DAAL_INT localBlockSizeDim = end - begin;
@@ -442,10 +445,10 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                         {
                             for (int i = 0; i < len; ++i)
                             {
-                                (const_cast<algorithmFPType*>((algorithmFPType*)lhs))[i] += ((algorithmFPType*)rhs)[i];
+                                const_cast<algorithmFPType*>(static_cast<const algorithmFPType*>(lhs))[i] += static_cast<const algorithmFPType*>(rhs)[i];
                             }
                         }
-                    );
+                    ));
 
                     PRAGMA_IVDEP
                     PRAGMA_VECTOR_ALWAYS

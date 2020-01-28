@@ -119,7 +119,9 @@ Status KMeansBatchKernel<method, algorithmFPType, cpu>::compute(const NumericTab
     size_t kIter;
     for (kIter = 0; kIter < nIter; kIter++)
     {
-        SharedPtr<task_t<algorithmFPType, cpu> > task = task_t<algorithmFPType, cpu>::create(p, nClusters, inClusters);
+        size_t cNum;
+        SharedPtr<task_t<algorithmFPType, cpu> > task = task_t<algorithmFPType, cpu>::create(p, nClusters, inClusters,
+            clusterS0.get(), clusterS1.get(), cValues.get(), cIndices.get(), cNum);
         DAAL_CHECK(task.get(), services::ErrorMemoryAllocationFailed);
         DAAL_ASSERT(task);
 
@@ -134,13 +136,6 @@ Status KMeansBatchKernel<method, algorithmFPType, cpu>::compute(const NumericTab
             break;
         }
 
-        {
-            DAAL_ITTNOTIFY_SCOPED_TASK(kmeansPartialReduceCentroids);
-            task->template kmeansComputeCentroids<method>(clusterS0.get(), clusterS1.get(), dS1.get());
-        }
-
-        size_t cNum;
-        DAAL_CHECK_STATUS(s, task->kmeansComputeCentroidsCandidates(cValues.get(), cIndices.get(), cNum));
         size_t cPos = 0;
 
         algorithmFPType newCentersGoalFunc = (algorithmFPType)0.0;

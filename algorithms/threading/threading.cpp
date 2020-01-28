@@ -633,8 +633,9 @@ DAAL_EXPORT void _daal_wait_task_group(void * taskGroupPtr) {}
 
 #endif
 
-DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, const void* a, const void* b, const void* c,
-                                                      daal::init_functype init_func, daal::loop_functype loop_func, daal::reduce_functype reduce_func)
+DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, const void* a, const void* b, const void* c, const void* d,
+                                                      daal::init_functype init_func, daal::delete_functype delete_func,
+                                                      daal::loop_functype loop_func, daal::reduce_functype reduce_func)
 {
     void* total = nullptr;
 
@@ -655,17 +656,17 @@ DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, con
                 init_func(&value, a);
             }
 
-            loop_func(value, range.begin(), range.end(), b);
+            loop_func(value, range.begin(), range.end(), c);
 
             return value;
         }, [&] (const void* lhs, const void* rhs)
         {
-            reduce_func(lhs, rhs, c);
+            reduce_func(lhs, rhs, d);
 
             void*& local = tls.local();
             if (local)
             {
-                daal::threaded_scalable_free(local);
+                delete_func(&local, b);
             }
             local = const_cast<void*>(rhs);
 
@@ -674,7 +675,13 @@ DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, con
     );
 
     for (auto it = tls.begin(); it != tls.end(); ++it)
-        daal::threaded_scalable_free(*it);
+    {
+        if (*it)
+        {
+            delete_func(&*it, b);
+            *it = nullptr;
+        }
+    }
   #elif defined(__DO_SEQ_LAYER__)
     void* local = nullptr;
 
@@ -683,9 +690,11 @@ DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, con
 
     for (int i = 0; i < n; ++i)
     {
-        loop_func(local, i, i + 1, b);
-        reduce_func(total, local, c);
+        loop_func(local, i, i + 1, c);
+        reduce_func(total, local, d);
     }
+
+    delete_func(&local, b);
   #endif
 
     return total;
