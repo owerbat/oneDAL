@@ -76,7 +76,7 @@ extern "C"
 
     DAAL_EXPORT void * _threaded_scalable_malloc(const size_t size, const size_t alignment);
     DAAL_EXPORT void _threaded_scalable_free(void * ptr);
-    
+
     DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, const void* a, const void* b, const void* c, const void* d,
                                                           daal::init_functype init_func, daal::delete_functype delete_func,
                                                           daal::loop_functype loop_func, daal::reduce_functype reduce_func);
