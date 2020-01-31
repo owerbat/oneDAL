@@ -585,6 +585,15 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
             }
             float l1 = penaltyL1Ptr[0];
 
+            ReadRows<float, cpu> penaltyL2BD;
+            if(penaltyL2NT != parameter->penaltyL2.get())
+            {
+                penaltyL2NT = parameter->penaltyL2.get();
+                penaltyL2BD.set(*parameter->penaltyL2, 0, 1);
+                penaltyL2Ptr = const_cast<float*>(penaltyL2BD.get());
+            }
+            float l2 = penaltyL2Ptr[0];
+
             WriteRows<algorithmFPType, cpu> proxBD;
             if (proxNT != componentOfProximalProjection)
             {
@@ -627,6 +636,18 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                         p[i] = 0;
                     }
                 }
+            }
+            if (l2)
+            {
+                // norm calculation
+                HomogenNumericTable<algorithmFPType>* hmgDataPtr = dynamic_cast<HomogenNumericTable<algorithmFPType>*>(dataNT);
+                algorithmFPType* X = hmgDataPtr->getArray();
+                algorithmFPType norm = 0.0;
+                for(size_t i = 0; i < nDataRows; i++)
+                    norm += X[i*nTheta + (id-1)]*X[i*nTheta + (id-1)];
+
+                for(size_t i = 0; i < proxSize; i++)
+                    p[i] *= 1.0/(1.0 + l2*nDataRows/norm);
             }
         }
         return services::Status();
