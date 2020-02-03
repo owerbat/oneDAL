@@ -34,6 +34,7 @@
 
 using namespace std;
 using namespace daal;
+using namespace daal::data_management;
 using namespace daal::algorithms::elastic_net;
 
 /* Input data set parameters */
@@ -62,7 +63,7 @@ int main(int argc, char * argv[])
 void trainModel()
 {
     /* Initialize FileDataSource<CSVFeatureManager> to retrieve the input data from a .csv file */
-    FileDataSource<CSVFeatureManager> trainDataSource(trainDatasetFileName, 
+    FileDataSource<CSVFeatureManager> trainDataSource(trainDatasetFileName,
                                                       DataSource::notAllocateNumericTable,
                                                       DataSource::doDictionaryFromContext);
 
