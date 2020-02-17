@@ -155,37 +155,41 @@ services::Status TrainBatchKernel<algorithmFPType, method, cpu>::compute(
 
         DAAL_OVERFLOW_CHECK_BY_MULTIPLICATION(size_t, nFeatures, sizeof(algorithmFPType));
 
-        algorithmFPType* total = static_cast<algorithmFPType*>(daal::parallel_deterministic_reduce(nRows, nRows,
+        algorithmFPType* total = static_cast<algorithmFPType*>(daal::parallel_deterministic_reduce(nRows, blockSize,
             [&] (void** value)
             {
-                *value = static_cast<void*>(services::internal::service_scalable_malloc<algorithmFPType, cpu>(nFeatures));
-                services::internal::service_memset<algorithmFPType, cpu>(static_cast<algorithmFPType*>(*value), 0, nFeatures);
+                *value = static_cast<void*>(services::internal::service_scalable_calloc<algorithmFPType, cpu>(nFeatures));
             }, [&] (void** value)
             {
                 services::internal::service_scalable_free<algorithmFPType, cpu>(static_cast<algorithmFPType*>(*value));
-            }, [&] (void* local, int begin, int end)
+            }, [&] (void* local_, size_t begin, size_t end)
             {
+                algorithmFPType* local = static_cast<algorithmFPType*>(local_);
+
                 PRAGMA_IVDEP
                 PRAGMA_VECTOR_ALWAYS
                 for (size_t j = 0; j < nFeatures; j++)
                 {
-                    static_cast<algorithmFPType*>(local)[j] = 0;
+                    local[j] = 0;
                 }
 
-                for (int it = begin; it != end; ++it)
+                for (size_t it = begin; it != end; ++it)
                 {
                     PRAGMA_IVDEP
                     PRAGMA_VECTOR_ALWAYS
-                    for(int j = 0; j < nFeatures; ++j)
+                    for(size_t j = 0; j < nFeatures; ++j)
                     {
-                        static_cast<algorithmFPType*>(local)[j] += xPtr[it * nFeatures + j];
+                        local[j] += xPtr[it * nFeatures + j];
                     }
                 }
-            }, [&] (const void* lhs, const void* rhs)
+            }, [&] (void* lhs_, void* rhs_)
             {
-                for (int i = 0; i < nFeatures; ++i)
+                algorithmFPType* lhs = static_cast<algorithmFPType*>(lhs_);
+                algorithmFPType* rhs = static_cast<algorithmFPType*>(rhs_);
+
+                for (size_t i = 0; i < nFeatures; ++i)
                 {
-                    (const_cast<algorithmFPType*>(static_cast<const algorithmFPType*>(lhs)))[i] += static_cast<const algorithmFPType*>(rhs)[i];
+                    lhs[i] += rhs[i];
                 }
             }
         ));

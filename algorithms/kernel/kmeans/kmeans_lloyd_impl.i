@@ -56,12 +56,6 @@ struct tls_task_t
         cS0      = service_scalable_calloc<int, cpu>(clNum_);
         cValues  = service_scalable_calloc<algorithmFPType, cpu>(clNum_);
         cIndices = service_scalable_calloc<size_t, cpu>(clNum_);
-
-        service_memset_seq<algorithmFPType, cpu>(mkl_buff, 0.0, max_block_size_ * clNum_);
-        service_memset_seq<algorithmFPType, cpu>(cS1,      0.0, clNum_ * dim_);
-        service_memset_seq<int,             cpu>(cS0,      0,   clNum_);
-        service_memset_seq<algorithmFPType, cpu>(cValues,  0.0, clNum_);
-        service_memset_seq<size_t,          cpu>(cIndices, 0,   clNum_);
     }
 
     ~tls_task_t()
@@ -263,7 +257,7 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedDense(const NumericTable
         }, [&] (void** tt)
         {
             delete static_cast<LocalType*>(*tt);
-        }, [&] (void* tt_, int begin, int end)
+        }, [&] (void* tt_, size_t begin, size_t end)
         {
             LocalType* tt = static_cast<LocalType*>(tt_);
 
@@ -362,10 +356,10 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedDense(const NumericTable
             } /* for (size_t i = 0; i < blockSize; i++) */
 
             *trg += goal;
-        }, [&] (const void* lhs_, const void* rhs_)
+        }, [&] (void* lhs_, void* rhs_)
         {
-            const LocalType* lhs = static_cast<const LocalType*>(lhs_);
-            const LocalType* rhs = static_cast<const LocalType*>(rhs_);
+            LocalType* lhs = static_cast<LocalType*>(lhs_);
+            LocalType* rhs = static_cast<LocalType*>(rhs_);
 
             // kmeansComputeCentroids
             for (size_t i = 0; i < clNum; i++)
@@ -385,7 +379,7 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedDense(const NumericTable
             algorithmFPType *tmpValuesPtr = nullptr;
             size_t *tmpIndicesPtr = nullptr;
 
-            auto reduceValuesAndIndices = [&] (algorithmFPType *cValues, size_t *cIndices, size_t& cNum,
+            auto reduceValuesAndIndices = [&] (algorithmFPType *cValues,  size_t *cIndices,  size_t& cNum,
                                                algorithmFPType *lcValues, size_t *lcIndices, size_t& lcNum) -> void
             {
                 size_t cPos = 0;
@@ -413,58 +407,53 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedDense(const NumericTable
 
             if (!lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
             {
-                const_cast<LocalType*>(lhs)->tmpValuesPtr  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
-                const_cast<LocalType*>(lhs)->tmpIndicesPtr = service_scalable_calloc<size_t, cpu>(clNum);
-                const_cast<LocalType*>(lhs)->totalValues   = service_scalable_calloc<algorithmFPType, cpu>(clNum);
-                const_cast<LocalType*>(lhs)->totalIndices  = service_scalable_calloc<size_t, cpu>(clNum);
-
-                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->tmpValuesPtr,  0.0, clNum);
-                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->tmpIndicesPtr, 0,   clNum);
-                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->totalValues,   0.0, clNum);
-                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->totalIndices,  0,   clNum);
+                lhs->tmpValuesPtr  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                lhs->tmpIndicesPtr = service_scalable_calloc<size_t, cpu>(clNum);
+                lhs->totalValues   = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                lhs->totalIndices  = service_scalable_calloc<size_t, cpu>(clNum);
 
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, lhs->cValues, lhs->cIndices, lhs->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, rhs->cValues, rhs->cIndices, rhs->cNum);
             }
             else if (lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
             {
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, rhs->cValues, rhs->cIndices, rhs->cNum);
             }
             else if (!lhs->tmpValuesPtr && rhs->tmpValuesPtr)
             {
-                const_cast<LocalType*>(lhs)->tmpValuesPtr  = rhs->tmpValuesPtr;
-                const_cast<LocalType*>(lhs)->tmpIndicesPtr = rhs->tmpIndicesPtr;
-                const_cast<LocalType*>(lhs)->totalValues   = rhs->totalValues;
-                const_cast<LocalType*>(lhs)->totalIndices  = rhs->totalIndices;
-                const_cast<LocalType*>(lhs)->totalNum      = rhs->totalNum;
+                lhs->tmpValuesPtr  = rhs->tmpValuesPtr;
+                lhs->tmpIndicesPtr = rhs->tmpIndicesPtr;
+                lhs->totalValues   = rhs->totalValues;
+                lhs->totalIndices  = rhs->totalIndices;
+                lhs->totalNum      = rhs->totalNum;
 
-                const_cast<LocalType*>(rhs)->tmpValuesPtr  = nullptr;
-                const_cast<LocalType*>(rhs)->tmpIndicesPtr = nullptr;
-                const_cast<LocalType*>(rhs)->totalValues   = nullptr;
-                const_cast<LocalType*>(rhs)->totalIndices  = nullptr;
+                rhs->tmpValuesPtr  = nullptr;
+                rhs->tmpIndicesPtr = nullptr;
+                rhs->totalValues   = nullptr;
+                rhs->totalIndices  = nullptr;
 
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, lhs->cValues, lhs->cIndices, lhs->cNum);
             }
             else
             {
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->totalValues, const_cast<LocalType*>(rhs)->totalIndices, const_cast<LocalType*>(rhs)->totalNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, rhs->totalValues, rhs->totalIndices, rhs->totalNum);
             }
             // kmeansComputeCentroidsCandidates
 
             // goalFunc
-            const_cast<LocalType*>(lhs)->goalFunc += rhs->goalFunc;
+            lhs->goalFunc += rhs->goalFunc;
             // goalFunc
         }
     );
@@ -519,7 +508,7 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedCSR(const NumericTable *
         }, [&] (void** tt)
         {
             delete static_cast<LocalType*>(*tt);
-        }, [&] (void* tt_, int begin, int end)
+        }, [&] (void* tt_, size_t begin, size_t end)
         {
             LocalType* tt = static_cast<LocalType*>(tt_);
 
@@ -598,10 +587,10 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedCSR(const NumericTable *
                     assignments[i] = (int)minIdx;
                 }
             }
-        }, [&] (const void* lhs_, const void* rhs_)
+        }, [&] (void* lhs_, void* rhs_)
         {
-            const LocalType* lhs = static_cast<const LocalType*>(lhs_);
-            const LocalType* rhs = static_cast<const LocalType*>(rhs_);
+            LocalType* lhs = static_cast<LocalType*>(lhs_);
+            LocalType* rhs = static_cast<LocalType*>(rhs_);
 
             // kmeansComputeCentroids
             for (size_t i = 0; i < clNum; i++)
@@ -649,58 +638,53 @@ Status task_t<algorithmFPType, cpu>::addNTToTaskThreadedCSR(const NumericTable *
 
             if (!lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
             {
-                const_cast<LocalType*>(lhs)->tmpValuesPtr  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
-                const_cast<LocalType*>(lhs)->tmpIndicesPtr = service_scalable_calloc<size_t, cpu>(clNum);
-                const_cast<LocalType*>(lhs)->totalValues   = service_scalable_calloc<algorithmFPType, cpu>(clNum);
-                const_cast<LocalType*>(lhs)->totalIndices  = service_scalable_calloc<size_t, cpu>(clNum);
-
-                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->tmpValuesPtr,  0.0, clNum);
-                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->tmpIndicesPtr, 0,   clNum);
-                service_memset_seq<algorithmFPType, cpu>(const_cast<LocalType*>(lhs)->totalValues,   0.0, clNum);
-                service_memset_seq<size_t,          cpu>(const_cast<LocalType*>(lhs)->totalIndices,  0,   clNum);
+                lhs->tmpValuesPtr  = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                lhs->tmpIndicesPtr = service_scalable_calloc<size_t, cpu>(clNum);
+                lhs->totalValues   = service_scalable_calloc<algorithmFPType, cpu>(clNum);
+                lhs->totalIndices  = service_scalable_calloc<size_t, cpu>(clNum);
 
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, lhs->cValues, lhs->cIndices, lhs->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, rhs->cValues, rhs->cIndices, rhs->cNum);
             }
             else if (lhs->tmpValuesPtr && !rhs->tmpValuesPtr)
             {
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->cValues, const_cast<LocalType*>(rhs)->cIndices, const_cast<LocalType*>(rhs)->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, rhs->cValues, rhs->cIndices, rhs->cNum);
             }
             else if (!lhs->tmpValuesPtr && rhs->tmpValuesPtr)
             {
-                const_cast<LocalType*>(lhs)->tmpValuesPtr  = rhs->tmpValuesPtr;
-                const_cast<LocalType*>(lhs)->tmpIndicesPtr = rhs->tmpIndicesPtr;
-                const_cast<LocalType*>(lhs)->totalValues   = rhs->totalValues;
-                const_cast<LocalType*>(lhs)->totalIndices  = rhs->totalIndices;
-                const_cast<LocalType*>(lhs)->totalNum      = rhs->totalNum;
+                lhs->tmpValuesPtr  = rhs->tmpValuesPtr;
+                lhs->tmpIndicesPtr = rhs->tmpIndicesPtr;
+                lhs->totalValues   = rhs->totalValues;
+                lhs->totalIndices  = rhs->totalIndices;
+                lhs->totalNum      = rhs->totalNum;
 
-                const_cast<LocalType*>(rhs)->tmpValuesPtr  = nullptr;
-                const_cast<LocalType*>(rhs)->tmpIndicesPtr = nullptr;
-                const_cast<LocalType*>(rhs)->totalValues   = nullptr;
-                const_cast<LocalType*>(rhs)->totalIndices  = nullptr;
+                rhs->tmpValuesPtr  = nullptr;
+                rhs->tmpIndicesPtr = nullptr;
+                rhs->totalValues   = nullptr;
+                rhs->totalIndices  = nullptr;
 
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(lhs)->cValues, const_cast<LocalType*>(lhs)->cIndices, const_cast<LocalType*>(lhs)->cNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, lhs->cValues, lhs->cIndices, lhs->cNum);
             }
             else
             {
                 tmpValuesPtr  = lhs->tmpValuesPtr;
                 tmpIndicesPtr = lhs->tmpIndicesPtr;
 
-                reduceValuesAndIndices(const_cast<LocalType*>(lhs)->totalValues, const_cast<LocalType*>(lhs)->totalIndices, const_cast<LocalType*>(lhs)->totalNum, const_cast<LocalType*>(rhs)->totalValues, const_cast<LocalType*>(rhs)->totalIndices, const_cast<LocalType*>(rhs)->totalNum);
+                reduceValuesAndIndices(lhs->totalValues, lhs->totalIndices, lhs->totalNum, rhs->totalValues, rhs->totalIndices, rhs->totalNum);
             }
             // kmeansComputeCentroidsCandidates
 
             // goalFunc
-            const_cast<LocalType*>(lhs)->goalFunc += rhs->goalFunc;
+            lhs->goalFunc += rhs->goalFunc;
             // goalFunc
         }
     );

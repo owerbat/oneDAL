@@ -633,7 +633,7 @@ DAAL_EXPORT void _daal_wait_task_group(void * taskGroupPtr) {}
 
 #endif
 
-DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, const void* a, const void* b, const void* c, const void* d,
+DAAL_EXPORT void* _daal_parallel_deterministic_reduce(size_t n, size_t grain_size, const void* a, const void* b, const void* c, const void* d,
                                                       daal::init_functype init_func, daal::delete_functype delete_func,
                                                       daal::loop_functype loop_func, daal::reduce_functype reduce_func)
 {
@@ -641,8 +641,8 @@ DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, con
 
   #if defined(__DO_TBB_LAYER__)
     tbb::enumerable_thread_specific<void*> tls([] { return nullptr; });
-    total = tbb::parallel_deterministic_reduce(tbb::blocked_range<int>(0, n, grain_size), static_cast<void*>(nullptr),
-        [&] (const tbb::blocked_range<int>& range, void* value)
+    total = tbb::parallel_deterministic_reduce(tbb::blocked_range<size_t>(0, n, grain_size), static_cast<void*>(nullptr),
+        [&] (const tbb::blocked_range<size_t>& range, void* value)
         {
             void*& local = tls.local();
 
@@ -661,7 +661,7 @@ DAAL_EXPORT void* _daal_parallel_deterministic_reduce(int n, int grain_size, con
             return value;
         }, [&] (const void* lhs, const void* rhs)
         {
-            reduce_func(lhs, rhs, d);
+            reduce_func(const_cast<void*>(lhs), const_cast<void*>(rhs), d);
 
             void*& local = tls.local();
             if (local)

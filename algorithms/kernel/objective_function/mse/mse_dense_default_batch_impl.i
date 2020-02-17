@@ -399,32 +399,28 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                     for (size_t i = 0; i < dim * dim; i++) gramMatrixPtr[i] = 0;
                     char uplo = 'L';
 
-                    const size_t blockSize = 256;
-                    DAAL_INT blockSizeDim  = (DAAL_INT)blockSize;
-                    size_t nBlocks         = nDataRows / blockSize;
-                    nBlocks += (nBlocks * blockSize != nDataRows);
-                    TlsMem<algorithmFPType, cpu, services::internal::ScalableCalloc<algorithmFPType, cpu> > tlsData(dim * yDim + (nTheta) * (nTheta));
+                    const size_t blockSize = 1024;
                     const size_t disp = dim * yDim;
+                    const size_t len = dim * yDim + (nTheta)*(nTheta);
 
-                    int len = dim*yDim + (nTheta)*(nTheta);
                     algorithmFPType* total = static_cast<algorithmFPType*>(daal::parallel_deterministic_reduce(nDataRows, blockSize,
                         [&] (void** value)
                         {
-                            *value = static_cast<void*>(services::internal::service_scalable_malloc<algorithmFPType, cpu>(len));
-                            services::internal::service_memset<algorithmFPType, cpu>(static_cast<algorithmFPType*>(*value), 0, len);
+                            *value = static_cast<void*>(services::internal::service_scalable_calloc<algorithmFPType, cpu>(len));
                         }, [&] (void** value)
                         {
                             services::internal::service_scalable_free<algorithmFPType, cpu>(static_cast<algorithmFPType*>(*value));
-                        }, [&] (void* local, int begin, int end)
+                        }, [&] (void* local, size_t begin, size_t end)
                         {
+                            algorithmFPType *localXY = static_cast<algorithmFPType*>(local);
+
                             PRAGMA_IVDEP
                             PRAGMA_VECTOR_ALWAYS
-                            for(int j = 0; j < len; j++)
+                            for(size_t j = 0; j < len; j++)
                             {
-                                static_cast<algorithmFPType*>(local)[j] = 0;
+                                localXY[j] = 0;
                             }
 
-                            algorithmFPType *localXY = static_cast<algorithmFPType*>(local);
                             algorithmFPType *localGram = localXY + disp;
                             const size_t startRow = begin;
                             DAAL_INT localBlockSizeDim = end - begin;
@@ -441,11 +437,14 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                                                                                       &dim, &one, localXY, &yDim);
                                 Blas<algorithmFPType, cpu>::xxsyrk(&uplo, &notrans, &dim, &localBlockSizeDim, &one, X + startRow*dim, &dim, &one, localGram, &dim);
                             }
-                        }, [&] (const void* lhs, const void* rhs)
+                        }, [&] (void* lhs_, void* rhs_)
                         {
-                            for (int i = 0; i < len; ++i)
+                            algorithmFPType* lhs = static_cast<algorithmFPType*>(lhs_);
+                            algorithmFPType* rhs = static_cast<algorithmFPType*>(rhs_);
+
+                            for (size_t i = 0; i < len; ++i)
                             {
-                                const_cast<algorithmFPType*>(static_cast<const algorithmFPType*>(lhs))[i] += static_cast<const algorithmFPType*>(rhs)[i];
+                                lhs[i] += rhs[i];
                             }
                         }
                     ));
