@@ -32,14 +32,9 @@
 #include "algorithms/optimization_solver/objective_function/mse_batch.h"
 #include "algorithms/optimization_solver/coordinate_descent/coordinate_descent_batch.h"
 
-<<<<<<< HEAD
 #include "service/kernel/data_management/service_numeric_table.h"
 #include "externals/service_math.h"
-=======
-#include "service_numeric_table.h"
-#include "service_math.h"
-#include "service_memory.h"
->>>>>>> templates removed from deterministic reduce
+#include "externals/service_memory.h"
 
 using namespace daal::algorithms::lasso_regression::training::internal;
 using namespace daal::algorithms::optimization_solver;
