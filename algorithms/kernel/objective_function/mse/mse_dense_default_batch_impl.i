@@ -413,13 +413,7 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                         }, [&] (void* local, size_t begin, size_t end)
                         {
                             algorithmFPType *localXY = static_cast<algorithmFPType*>(local);
-
-                            PRAGMA_IVDEP
-                            PRAGMA_VECTOR_ALWAYS
-                            for(size_t j = 0; j < len; j++)
-                            {
-                                localXY[j] = 0;
-                            }
+                            daal::services::internal::service_memset_seq<algorithmFPType, cpu>(localXY, 0, len);
 
                             algorithmFPType *localGram = localXY + disp;
                             const size_t startRow = begin;
@@ -442,6 +436,8 @@ inline services::Status MSEKernel<algorithmFPType, method, cpu>::compute(Numeric
                             algorithmFPType* lhs = static_cast<algorithmFPType*>(lhs_);
                             algorithmFPType* rhs = static_cast<algorithmFPType*>(rhs_);
 
+                            PRAGMA_IVDEP
+                            PRAGMA_VECTOR_ALWAYS
                             for (size_t i = 0; i < len; ++i)
                             {
                                 lhs[i] += rhs[i];

@@ -160,13 +160,7 @@ services::Status TrainBatchKernel<algorithmFPType, method, cpu>::compute(
             }, [&] (void* local_, size_t begin, size_t end)
             {
                 algorithmFPType* local = static_cast<algorithmFPType*>(local_);
-
-                PRAGMA_IVDEP
-                PRAGMA_VECTOR_ALWAYS
-                for (size_t j = 0; j < nFeatures; j++)
-                {
-                    local[j] = 0;
-                }
+                daal::services::internal::service_memset_seq<algorithmFPType, cpu>(local, 0, nFeatures);
 
                 for (size_t it = begin; it != end; ++it)
                 {
@@ -182,6 +176,8 @@ services::Status TrainBatchKernel<algorithmFPType, method, cpu>::compute(
                 algorithmFPType* lhs = static_cast<algorithmFPType*>(lhs_);
                 algorithmFPType* rhs = static_cast<algorithmFPType*>(rhs_);
 
+                PRAGMA_IVDEP
+                PRAGMA_VECTOR_ALWAYS
                 for (size_t i = 0; i < nFeatures; ++i)
                 {
                     lhs[i] += rhs[i];
