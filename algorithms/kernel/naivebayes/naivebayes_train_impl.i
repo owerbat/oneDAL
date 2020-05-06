@@ -173,25 +173,20 @@ Status collectCounters(const Parameter * nbPar, NumericTable * ntData, NumericTa
 
     daal::tls<algorithmFPType *> tls_n_ci([=]() -> algorithmFPType * { return _CALLOC_<algorithmFPType, cpu>(p * c); });
 
+    const size_t blockSize = 80000 / (2 * p + 1); // numberOfClocksPerIteration / 8 >= 10000
+    const size_t numBlocks = n / blockSize + !!(n % blockSize);
+
     SafeStatus safeStat;
-    daal::threader_for_blocked(n, n, [=, &tls_n_ci, &safeStat](algorithmFPType j0, algorithmFPType jn) {
+    daal::threader_for(numBlocks, numBlocks, [=, &tls_n_ci, &safeStat](const size_t iBlock) {
         algorithmFPType * local_n_ci = tls_n_ci.local();
         DAAL_CHECK_THR(local_n_ci, ErrorMemoryAllocationFailed);
 
         localDataCollector<algorithmFPType, method, cpu> ldc(p, c, ntData, ntClass, local_n_ci);
 
-        algorithmFPType block_size = ldc.getBlockSize(jn);
-        int i;
+        const size_t startRow = iBlock * blockSize;
+        const size_t numRowsInBlock = (iBlock < numBlocks - 1) ? blockSize : n - startRow;
 
-        for (i = 0; i + block_size < jn + 1; i += block_size)
-        {
-            safeStat |= ldc.addData(j0 + i, block_size);
-        }
-
-        if (i != jn)
-        {
-            safeStat |= ldc.addData(j0 + i, jn - i);
-        }
+        safeStat |= ldc.addData(startRow, numRowsInBlock);
     });
 
     tls_n_ci.reduce([=](algorithmFPType * v) {
