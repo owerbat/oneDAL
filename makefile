@@ -168,8 +168,8 @@ USECPUS.out.defs.filter := $(if $(USECPUS.out.defs),sed $(sed.-b) $(sed.-i) -E -
 
 # List of needed threadings layers can be specified in DAALTHRS.
 # if DAALTHRS is empty, threading will be incapsulated to core
-DAALTHRS ?= tbb seq
-DAALAY   ?= a y
+DAALTHRS ?= tbb
+DAALAY   ?= y
 
 DIR:=.
 CPPDIR:=$(DIR)/cpp
@@ -272,11 +272,11 @@ y_full_name_postfix := $(if $(OS_is_win),,$(if $(OS_is_mac),.$(MAJORBINARY).$(MI
 y_major_name_postfix := $(if $(OS_is_win),,$(if $(OS_is_mac),.$(MAJORBINARY).$(y),.$(y).$(MAJORBINARY)))
 
 core_a       := $(plib)onedal_core.$a
-core_y       := $(plib)onedal_core.$y
+core_y       := $(plib)onedal_core.$(MAJORBINARY).$y
 oneapi_a     := $(plib)onedal.$a
-oneapi_y     := $(plib)onedal.$y
+oneapi_y     := $(plib)onedal.$(MAJORBINARY).$y
 oneapi_a.dpc := $(plib)onedal_dpc.$a
-oneapi_y.dpc := $(plib)onedal_dpc.$y
+oneapi_y.dpc := $(plib)onedal_dpc.$(MAJORBINARY).$y
 
 thr_tbb_a := $(plib)onedal_thread.$a
 thr_seq_a := $(plib)onedal_sequential.$a
@@ -489,9 +489,9 @@ $(WORKDIR.lib)/$(core_a):                   $(daaldep.ipp) $(daaldep.vml) $(daal
 
 $(WORKDIR.lib)/$(core_y): LOPT += $(-fPIC)
 $(WORKDIR.lib)/$(core_y): LOPT += $(daaldep.rt.seq)
-$(WORKDIR.lib)/$(core_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.dll=%_dll.lib),)
+$(WORKDIR.lib)/$(core_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib),)
 ifdef OS_is_win
-$(WORKDIR.lib)/$(core_y:%.dll=%_dll.lib): $(WORKDIR.lib)/$(core_y)
+$(WORKDIR.lib)/$(core_y:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib): $(WORKDIR.lib)/$(core_y)
 endif
 $(CORE.tmpdir_y)/$(core_y:%.$y=%_link.txt): $(CORE.objs_y) $(if $(OS_is_win),$(CORE.tmpdir_y)/dll.res,) | $(CORE.tmpdir_y)/. ; $(WRITE.PREREQS)
 $(WORKDIR.lib)/$(core_y):                   $(daaldep.ipp) $(daaldep.vml) $(daaldep.mkl) \
@@ -780,10 +780,10 @@ $(WORKDIR.lib)/$(oneapi_y): \
     $(ONEAPI.tmpdir_y)/$(oneapi_y:%.$y=%_link.txt) ; $(LINK.DYNAMIC) ; $(LINK.DYNAMIC.POST)
 $(WORKDIR.lib)/$(oneapi_y): LOPT += $(-fPIC)
 $(WORKDIR.lib)/$(oneapi_y): LOPT += $(daaldep.rt.seq)
-$(WORKDIR.lib)/$(oneapi_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.dll=%_dll.lib),)
-$(WORKDIR.lib)/$(oneapi_y): LOPT += $(if $(OS_is_win),$(WORKDIR.lib)/$(core_y:%.dll=%_dll.lib))
+$(WORKDIR.lib)/$(oneapi_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib),)
+$(WORKDIR.lib)/$(oneapi_y): LOPT += $(if $(OS_is_win),$(WORKDIR.lib)/$(core_y:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib))
 ifdef OS_is_win
-$(WORKDIR.lib)/$(oneapi_y:%.dll=%_dll.lib): $(WORKDIR.lib)/$(oneapi_y)
+$(WORKDIR.lib)/$(oneapi_y:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib): $(WORKDIR.lib)/$(oneapi_y)
 endif
 
 $(ONEAPI.tmpdir_y.dpc)/$(oneapi_y.dpc:%.$y=%_link.txt): \
@@ -793,12 +793,12 @@ $(WORKDIR.lib)/$(oneapi_y.dpc): \
     $(ONEAPI.tmpdir_y.dpc)/$(oneapi_y.dpc:%.$y=%_link.txt) ; $(DPC.LINK.DYNAMIC) ; $(LINK.DYNAMIC.POST)
 $(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(-fPIC)
 $(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(daaldep.rt.dpc)
-$(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.dll=%_dll.lib),)
-$(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(if $(OS_is_win),$(WORKDIR.lib)/$(core_y:%.dll=%_dll.lib))
+$(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib),)
+$(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(if $(OS_is_win),$(WORKDIR.lib)/$(core_y:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib))
 $(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(if $(OS_is_win),sycl.lib OpenCL.lib)
 $(WORKDIR.lib)/$(oneapi_y.dpc): LOPT += $(if $(OS_is_win),$(mklgpufpk.LIBS_A))
 ifdef OS_is_win
-$(WORKDIR.lib)/$(oneapi_y.dpc:%.dll=%_dll.lib): $(WORKDIR.lib)/$(oneapi_y.dpc)
+$(WORKDIR.lib)/$(oneapi_y.dpc:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib): $(WORKDIR.lib)/$(oneapi_y.dpc)
 endif
 
 $(ONEAPI.tmpdir_y)/dll.res: $(VERSION_DATA_FILE)
@@ -832,11 +832,11 @@ $(THR.tmpdir_y)/%_link.def: $(THR.srcdir)/$(daaldep.$(PLAT).threxport) | $(THR.t
 	$(daaldep.$(_OS).threxport.create) > $@
 
 $(WORKDIR.lib)/$(thr_tbb_y): LOPT += $(-fPIC) $(daaldep.rt.thr)
-$(WORKDIR.lib)/$(thr_tbb_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.dll=%_dll.lib),)
+$(WORKDIR.lib)/$(thr_tbb_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib),)
 $(WORKDIR.lib)/$(thr_tbb_y): $(THR_TBB.objs_y) $(daaldep.mkl.thr) $(daaldep.mkl) $(if $(OS_is_win),$(THR.tmpdir_y)/dll_tbb.res,) $(THR.tmpdir_y)/$(thr_tbb_y:%.$y=%_link.def) ; $(LINK.DYNAMIC) ; $(LINK.DYNAMIC.POST)
 
 $(WORKDIR.lib)/$(thr_seq_y): LOPT += $(-fPIC) $(daaldep.rt.seq)
-$(WORKDIR.lib)/$(thr_seq_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.dll=%_dll.lib),)
+$(WORKDIR.lib)/$(thr_seq_y): LOPT += $(if $(OS_is_win),-IMPLIB:$(@:%.$(MAJORBINARY).dll=%_dll.$(MAJORBINARY).lib),)
 $(WORKDIR.lib)/$(thr_seq_y): $(THR_SEQ.objs_y) $(daaldep.mkl.seq) $(daaldep.mkl) $(if $(OS_is_win),$(THR.tmpdir_y)/dll_seq.res,) $(THR.tmpdir_y)/$(thr_seq_y:%.$y=%_link.def) ; $(LINK.DYNAMIC) ; $(LINK.DYNAMIC.POST)
 
 THR.objs_a := $(THR_TBB.objs_a) $(THR_SEQ.objs_a)
@@ -987,7 +987,10 @@ define .release.ay_win
 $3: $2/$1
 $(if $(phony-upd),$(eval .PHONY: $2/$1))
 $2/$1: $(WORKDIR.lib)/$1 | $2/.
-	cp -fp $(WORKDIR.lib)/$1 $2/$(if $(findstring dll.,$1),$(subst dll.,dll.$(MAJORBINARY).,$1),$(subst .dll,.$(MAJORBINARY).dll,$1))
+	# cp -fp $(WORKDIR.lib)/$1 $2/$1
+	# cp -fp $(WORKDIR.lib)/$1 $2/$(if $(findstring dll.,$1),$(subst dll.,dll.$(MAJORBINARY).,$1),$(subst .dll,.$(MAJORBINARY).dll,$1))
+	# cp -fp $(WORKDIR.lib)/$1 $2/$(subst .dll,.$(MAJORBINARY).dll,$1)
+	cp -fp $(WORKDIR.lib)/$1 $2/$(subst dll.,dll.$(MAJORBINARY).,$1)
 endef
 define .release.y_link
 $3: $2/$1

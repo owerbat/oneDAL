@@ -164,12 +164,12 @@ static HMODULE WINAPI _daal_LoadLibrary(LPTSTR filename)
 
 DAAL_EXPORT HMODULE load_onedal_thread_dll()
 {
-    return DAAL_LOAD_DLL("onedal_thread.dll");
+    return DAAL_LOAD_DLL("onedal_thread.1.dll");
 }
 
 DAAL_EXPORT HMODULE load_onedal_sequential_dll()
 {
-    return DAAL_LOAD_DLL("onedal_sequential.dll");
+    return DAAL_LOAD_DLL("onedal_sequential.1.dll");
 }
 
 static void load_daal_thr_dll(void)
