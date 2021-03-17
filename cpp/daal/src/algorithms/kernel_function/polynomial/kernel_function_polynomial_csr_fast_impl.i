@@ -107,20 +107,16 @@ template <typename algorithmFPType, CpuType cpu>
 services::Status KernelImplPolynomial<fastCSR, algorithmFPType, cpu>::computeInternalMatrixMatrix(const NumericTable * a1, const NumericTable * a2,
                                                                                                   NumericTable * r, const KernelParameter * par)
 {
-    if (par->kernelType != KernelType::linear)
-    {
-        return services::ErrorMethodNotImplemented;
-    }
-
     //prepareData
     const size_t nVectors1 = a1->getNumberOfRows();
     const size_t nVectors2 = a2->getNumberOfRows();
     const size_t nFeatures = a1->getNumberOfColumns();
 
-    const algorithmFPType k    = (algorithmFPType)(par->scale);
-    const algorithmFPType b    = (algorithmFPType)(par->shift);
-    const algorithmFPType zero = algorithmFPType(0.0);
-    const algorithmFPType one  = algorithmFPType(1.0);
+    const algorithmFPType k      = (algorithmFPType)(par->scale);
+    const algorithmFPType b      = (algorithmFPType)(par->shift);
+    const algorithmFPType degree = (algorithmFPType)(par->degree);
+    const algorithmFPType zero   = algorithmFPType(0.0);
+    const algorithmFPType one    = algorithmFPType(1.0);
 
     if (a1 == a2)
     {
@@ -149,6 +145,11 @@ services::Status KernelImplPolynomial<fastCSR, algorithmFPType, cpu>::computeInt
         }
 
         daal::threader_for_optional(nVectors1, nVectors1, [=](size_t i) {
+            if (par->degree != 1)
+            {
+                Math<algorithmFPType, cpu>::vPowx(i + 1, dataR + i * nVectors1, degree, dataR + i * nVectors1);
+            }
+
             PRAGMA_IVDEP
             PRAGMA_VECTOR_ALWAYS
             for (size_t j = i + 1; j < nVectors1; j++)
@@ -212,6 +213,14 @@ services::Status KernelImplPolynomial<fastCSR, algorithmFPType, cpu>::computeInt
                         }
                     }
                 }
+
+                if (par->degree != 1)
+                {
+                    for (size_t i = 0; i < nRowsInBlock1; i++)
+                    {
+                        Math<algorithmFPType, cpu>::vPowx(nRowsInBlock2, dataR + i * nVectors2, degree, dataR + i * nVectors2);
+                    }
+                }
             }
             else
             {
@@ -229,6 +238,14 @@ services::Status KernelImplPolynomial<fastCSR, algorithmFPType, cpu>::computeInt
                         {
                             mklBuff[i * ldc + j] = mklBuff[i * ldc + j] * k + b;
                         }
+                    }
+                }
+
+                if (par->degree != 1)
+                {
+                    for (size_t i = 0; i < nRowsInBlock1; ++i)
+                    {
+                        Math<algorithmFPType, cpu>::vPowx(nRowsInBlock2, mklBuff + i * blockSize, degree, mklBuff + i * blockSize);
                     }
                 }
 
