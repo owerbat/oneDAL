@@ -143,7 +143,7 @@ so sointel64:
 _make_ex: $(RES)
 
 vpath
-vpath %.cpp $(addprefix ./source/,association_rules boosting cholesky compression covariance datasource decision_forest distance em \
+vpath %.cpp $(addprefix ./source/,association_rules boosting cholesky covariance datasource decision_forest distance em \
                                   gradient_boosted_trees host_app kernel_function kmeans linear_regression logistic_regression \
                                   moments naive_bayes outlier_detection qr quality_metrics serialization stump svd svm utils services  \
                                   quantiles pivoted_qr pca implicit_als set_number_of_threads sorting error_handling \
