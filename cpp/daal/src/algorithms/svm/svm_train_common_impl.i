@@ -71,7 +71,7 @@ algorithmFPType HelperTrainSVM<algorithmFPType, cpu>::WSSi(size_t nActiveVectors
 
     Bi                   = -1;
     algorithmFPType GMin = (MaxVal<algorithmFPType>::get()); // some big negative number
-    char sign            = getSign(signNuType);
+    const char sign      = getSign(signNuType);
 
     /* Find i index of the working set (Bi) */
     for (size_t i = 0; i < nActiveVectors; ++i)
@@ -105,10 +105,6 @@ void HelperTrainSVM<algorithmFPType, cpu>::WSSjLocalBaseline(const size_t jStart
     for (size_t j = jStart; j < jEnd; j++)
     {
         const algorithmFPType gradj = grad[j];
-        if (!(I[j] & sign))
-        {
-            continue;
-        }
         if ((I[j] & low) != low)
         {
             continue;
@@ -118,6 +114,10 @@ void HelperTrainSVM<algorithmFPType, cpu>::WSSjLocalBaseline(const size_t jStart
             GMax2 = gradj;
         }
         if (gradj < GMin)
+        {
+            continue;
+        }
+        if (!(I[j] & sign))
         {
             continue;
         }
