@@ -59,8 +59,6 @@
 
 #include "src/algorithms/svm/svm_train_common_impl.i"
 
-#include <algorithm>
-
 namespace daal
 {
 namespace algorithms
@@ -119,7 +117,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
         DAAL_CHECK_STATUS(status, regressionInit(yTable, wTable, C, nu, epsilon, y, grad, alpha, cw, nNonZeroWeights, svmType));
     }
 
-    TaskWorkingSet<algorithmFPType, cpu> workSet(nNonZeroWeights, nTrainVectors, 1024, svmType);
+    TaskWorkingSet<algorithmFPType, cpu> workSet(nNonZeroWeights, nTrainVectors, maxBlockSize, svmType);
     DAAL_CHECK_STATUS(status, workSet.init());
     const size_t nWS = workSet.getSize();
 
@@ -140,11 +138,6 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
     defaultCacheSize        = services::internal::max<cpu, size_t>(nWS, defaultCacheSize);
     auto cachePtr           = SVMCache<thunder, lruCache, algorithmFPType, cpu>::create(defaultCacheSize, nWS, nVectors, xTable, kernel, status);
     DAAL_CHECK_STATUS_VAR(status);
-
-    const size_t max_size = nTrainVectors;
-    TArray<size_t, cpu> idxsArray(max_size);
-    size_t * idxs = idxsArray.get();
-    for (size_t i = 0, j = 0; i < nTrainVectors && j < max_size; ++i) if (y[i] > 0) { idxs[j] = i; ++j; }
 
     if (svmType == SvmType::nu_classification || svmType == SvmType::nu_regression)
     {
@@ -175,6 +168,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
         if (checkStopCondition(diff, diffPrev, accuracyThreshold, sameLocalDiff) && iter >= nNoChanges) break;
         diffPrev = diff;
     }
+    printf("total iterations: %zu\n", iter);
 
     cachePtr->clear();
     SaveResultTask<algorithmFPType, cpu> saveResult(nVectors, y, alpha, grad, svmType, cachePtr.get());
@@ -440,7 +434,6 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
             HelperTrainSVM<algorithmFPType, cpu>::WSSjLocal(0, nWS, KBiBlockNeg, kdLocal, gradLocal, I, GMinNeg, KBiBiNeg, tau, BjNeg, GMaxNeg,
                                                             GMax2Neg, deltaNeg, SignNuType::negative);
 
-
             if (GMaxPos > GMaxNeg)
             {
                 Bi       = BiPos;
@@ -461,6 +454,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
                 GMax2    = GMax2Neg;
                 KBiBlock = KBiBlockNeg;
             }
+
             localDiff = services::internal::max<cpu, algorithmFPType>(GMax2Pos - GMinPos, GMax2Neg - GMinNeg);
         }
         else
@@ -471,6 +465,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
             KBiBlock                    = &kernelLocal[Bi * nWS];
 
             HelperTrainSVM<algorithmFPType, cpu>::WSSjLocal(0, nWS, KBiBlock, kdLocal, gradLocal, I, GMin, KBiBi, tau, Bj, GMax, GMax2, delta);
+
             localDiff = GMax2 - GMin;
         }
 
@@ -527,7 +522,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
     }
 
     // localDiff = firstDiff;
-    if (svmType == SvmType::nu_classification && localDiff < algorithmFPType(0))
+    if (svmType == SvmType::nu_classification)
     {
         localDiff = prevDiff;
     }
