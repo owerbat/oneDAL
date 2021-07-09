@@ -144,6 +144,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
         DAAL_CHECK_STATUS(status, initGrad(xTable, kernel, nVectors, nTrainVectors, y, alpha, grad));
     }
 
+    innerIterCount = 0;
     size_t iter = 0;
     for (; iter < maxIterations; ++iter)
     {
@@ -168,7 +169,8 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
         if (checkStopCondition(diff, diffPrev, accuracyThreshold, sameLocalDiff) && iter >= nNoChanges) break;
         diffPrev = diff;
     }
-    printf("total iterations: %zu\n", iter);
+    printf("total iterations: %zu\n", iter + 1);
+    printf("inner iterations: %zu\n", innerIterCount);
 
     cachePtr->clear();
     SaveResultTask<algorithmFPType, cpu> saveResult(nVectors, y, alpha, grad, svmType, cachePtr.get());
@@ -333,7 +335,7 @@ template <typename algorithmFPType, CpuType cpu>
 services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
     const algorithmFPType * y, const algorithmFPType * grad, const uint32_t * wsIndices, algorithmFPType ** kernelWS, const size_t nVectors,
     const size_t nWS, const algorithmFPType * cw, const double accuracyThreshold, const double tau, algorithmFPType * buffer, char * I,
-    algorithmFPType * alpha, algorithmFPType * deltaAlpha, algorithmFPType & localDiff, SvmType svmType) const
+    algorithmFPType * alpha, algorithmFPType * deltaAlpha, algorithmFPType & localDiff, SvmType svmType)
 {
     DAAL_ITTNOTIFY_SCOPED_TASK(SMOBlockSolver);
     services::Status status;
@@ -397,6 +399,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
     size_t iter = 0;
     for (; iter < innerMaxIterations; ++iter)
     {
+        ++innerIterCount;
         algorithmFPType GMin  = MaxVal<algorithmFPType>::get();
         algorithmFPType GMax  = -MaxVal<algorithmFPType>::get();
         algorithmFPType GMax2 = -MaxVal<algorithmFPType>::get();
@@ -521,11 +524,11 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::SMOBlockSolver(
         prevDiff = localDiff;
     }
 
-    // localDiff = firstDiff;
-    if (svmType == SvmType::nu_classification)
-    {
-        localDiff = prevDiff;
-    }
+    // if (svmType == SvmType::nu_classification)
+    // {
+        localDiff = firstDiff;
+        // localDiff = prevDiff;
+    // }
 
     /* Compute diff and scatter to alpha vector */
     PRAGMA_IVDEP
