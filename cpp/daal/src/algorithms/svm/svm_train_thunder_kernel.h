@@ -67,7 +67,8 @@ private:
     services::Status updateGrad(algorithmFPType ** kernelWS, const algorithmFPType * deltaalpha, algorithmFPType * grad, const size_t nVectors,
                                 const size_t nTrainVectors, const size_t nWS);
 
-    bool checkStopCondition(const algorithmFPType diff, const algorithmFPType diffPrev, const algorithmFPType eps, size_t & sameLocalDiff);
+    bool checkStopCondition(const algorithmFPType diff, const algorithmFPType diffPrev, const algorithmFPType diffPrev2,
+                            const algorithmFPType eps, size_t & sameLocalDiff, size_t & sameLocalDiff2);
 
     services::Status initGrad(const NumericTablePtr & xTable, const kernel_function::KernelIfacePtr & kernel, const size_t nVectors,
                               const size_t nTrainVectors, algorithmFPType * const y, algorithmFPType * const alpha, algorithmFPType * grad);

@@ -117,13 +117,15 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
         DAAL_CHECK_STATUS(status, regressionInit(yTable, wTable, C, nu, epsilon, y, grad, alpha, cw, nNonZeroWeights, svmType));
     }
 
-    TaskWorkingSet<algorithmFPType, cpu> workSet(nNonZeroWeights, nTrainVectors, maxBlockSize, svmType);
+    TaskWorkingSet<algorithmFPType, cpu> workSet(nNonZeroWeights, nTrainVectors, 1024, svmType);
     DAAL_CHECK_STATUS(status, workSet.init());
     const size_t nWS = workSet.getSize();
 
     algorithmFPType diff     = algorithmFPType(0);
     algorithmFPType diffPrev = algorithmFPType(0);
+    algorithmFPType diffPrev2 = algorithmFPType(0);
     size_t sameLocalDiff     = 0;
+    size_t sameLocalDiff2     = 0;
 
     TArray<algorithmFPType, cpu> buffer(nWS * MemSmoId::latest + nWS * nWS);
     DAAL_CHECK_MALLOC(buffer.get());
@@ -148,6 +150,7 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
     size_t iter = 0;
     for (; iter < maxIterations; ++iter)
     {
+        // if (iter >= 1) throw 1;
         if (iter != 0)
         {
             DAAL_CHECK_STATUS(status, workSet.copyLastToFirst());
@@ -166,7 +169,8 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::compute(const Nume
                                                  alpha, deltaAlpha.get(), diff, svmType));
 
         DAAL_CHECK_STATUS(status, updateGrad(kernelSOARes, deltaAlpha.get(), grad, nVectors, nTrainVectors, nWS));
-        if (checkStopCondition(diff, diffPrev, accuracyThreshold, sameLocalDiff) && iter >= nNoChanges) break;
+        if (checkStopCondition(diff, diffPrev, diffPrev2, accuracyThreshold, sameLocalDiff, sameLocalDiff2) && iter >= nNoChanges) break;
+        diffPrev2 = diffPrev;
         diffPrev = diff;
     }
     printf("total iterations: %zu\n", iter + 1);
@@ -586,9 +590,13 @@ services::Status SVMTrainImpl<thunder, algorithmFPType, cpu>::updateGrad(algorit
 
 template <typename algorithmFPType, CpuType cpu>
 bool SVMTrainImpl<thunder, algorithmFPType, cpu>::checkStopCondition(const algorithmFPType diff, const algorithmFPType diffPrev,
-                                                                     const algorithmFPType accuracyThreshold, size_t & sameLocalDiff)
+                                                                     const algorithmFPType diffPrev2,
+                                                                     const algorithmFPType accuracyThreshold, size_t & sameLocalDiff,
+                                                                     size_t & sameLocalDiff2)
 {
     sameLocalDiff = internal::Math<algorithmFPType, cpu>::sFabs(diff - diffPrev) < accuracyThreshold * accuracyThresholdInner ? sameLocalDiff + 1 : 0;
+    // sameLocalDiff2 = internal::Math<algorithmFPType, cpu>::sFabs(diff - diffPrev2) < accuracyThreshold * accuracyThresholdInner ? sameLocalDiff2 + 1 : 0;
+    // if (sameLocalDiff > nNoChanges || sameLocalDiff2 > nNoChanges || diff < accuracyThreshold)
     if (sameLocalDiff > nNoChanges || diff < accuracyThreshold)
     {
         return true;

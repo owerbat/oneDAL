@@ -105,6 +105,10 @@ void HelperTrainSVM<algorithmFPType, cpu>::WSSjLocalBaseline(const size_t jStart
     for (size_t j = jStart; j < jEnd; j++)
     {
         const algorithmFPType gradj = grad[j];
+        if (!(I[j] & sign))
+        {
+            continue;
+        }
         if ((I[j] & low) != low)
         {
             continue;
@@ -114,10 +118,6 @@ void HelperTrainSVM<algorithmFPType, cpu>::WSSjLocalBaseline(const size_t jStart
             GMax2 = gradj;
         }
         if (gradj < GMin)
-        {
-            continue;
-        }
-        if (!(I[j] & sign))
         {
             continue;
         }
